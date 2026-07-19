@@ -57,9 +57,21 @@ sandbox delete "$ID" --wait
 
 Deletion removes runtime resources. The stopped control-plane record remains for audit.
 
-## Public tunnels
+## Share a local service
 
-The service must bind `0.0.0.0` inside the sandbox. Then create, inspect, and remove its public route:
+```sh
+sandbox http 3000
+sandbox http 4321 --subdomain design-review
+SANDBOX_HTTP_RELAY=https://relay.tunnel.example.com sandbox http 8080
+```
+
+`sandbox http PORT` checks that the port is listening on local IPv4 or IPv6, connects to the hosted Sandbox relay over an outbound WebSocket, prints the temporary HTTPS URL, and stays attached until Ctrl-C. The default relay is `https://relay.tunnel.yshubham.com`; `SANDBOX_HTTP_RELAY` or `--relay` selects a self-hosted deployment. `SANDBOX_TOKEN` is sent when the selected relay requires operator authentication.
+
+The relay supports ordinary HTTP plus WebSocket upgrades such as Vite HMR. It detects whether the app is listening on IPv4 (`127.0.0.1`) or IPv6 (`::1`) and forwards to that exact loopback address. It deliberately does not preserve the public `Host` or `Origin`, so a development server never has to trust a random hostname. The route is exact-host, expires at the server TTL, and is removed immediately when the CLI disconnects. The URL is unauthenticated and public; do not share admin panels, credentials, or private data.
+
+## Public tunnels from managed sandboxes
+
+A service inside a managed sandbox must bind `0.0.0.0`. Then create, inspect, and remove its controller-managed route:
 
 ```sh
 sandbox tunnel create "$ID" --port 3000
@@ -68,7 +80,7 @@ sandbox tunnel list "$ID"
 sandbox tunnel delete "$ID" "$TUNNEL_ID"
 ```
 
-Tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. Treat every printed URL as public. See [tunnels.md](tunnels.md).
+Controller-managed tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. The server enforces sensitivity, worker capability, tunnel count, and protocol policy. Use `--subdomain` only for a stable label. See [tunnels.md](tunnels.md).
 
 ## Agents
 

@@ -1,3 +1,5 @@
+mod local_http;
+
 use std::{
     collections::BTreeMap,
     time::{Duration, Instant},
@@ -68,6 +70,8 @@ enum Commands {
         #[command(subcommand)]
         command: TunnelCommands,
     },
+    /// Share a local HTTP service at a temporary public URL.
+    Http(HttpArgs),
     /// Print MCP client configuration for sandbox-mcp.
     McpConfig,
 }
@@ -122,6 +126,23 @@ struct ExecArgs {
     no_wait: bool,
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     argv: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct HttpArgs {
+    /// Local HTTP service port to share.
+    #[arg(value_parser = parse_port)]
+    port: u16,
+    /// Hosted Sandbox relay. Override this for a self-hosted deployment.
+    #[arg(
+        long,
+        env = "SANDBOX_HTTP_RELAY",
+        default_value = "https://relay.tunnel.yshubham.com"
+    )]
+    relay: Url,
+    /// Optional temporary hostname label below the relay's wildcard domain.
+    #[arg(long)]
+    subdomain: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -187,6 +208,9 @@ enum SensitivityArg {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Reqwest and the WebSocket relay share rustls. Select one process-wide
+    // provider explicitly so release builds never depend on feature inference.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = Cli::parse();
     let client = SandboxClient::new(
         cli.server.clone(),
@@ -305,6 +329,16 @@ async fn main() -> Result<()> {
         }
         Commands::Agent { command } => run_agent(command, &client, cli.json).await?,
         Commands::Tunnel { command } => run_tunnel(command, &client, cli.json).await?,
+        Commands::Http(args) => {
+            local_http::run(
+                args.port,
+                args.relay,
+                args.subdomain,
+                cli.token.as_deref(),
+                cli.json,
+            )
+            .await?
+        }
         Commands::McpConfig => {
             print_json(
                 &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":cli.server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
@@ -555,4 +589,55 @@ fn parse_exposure(value: &str) -> Result<PortExposure, String> {
     };
     exposure.validate().map_err(|error| error.to_string())?;
     Ok(exposure)
+}
+
+fn parse_port(value: &str) -> Result<u16, String> {
+    let port = value
+        .parse::<u16>()
+        .map_err(|_| "port must be between 1 and 65535".to_owned())?;
+    if port == 0 {
+        return Err("port must be between 1 and 65535".into());
+    }
+    Ok(port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_http_shortcut() {
+        let cli =
+            Cli::try_parse_from(["sandbox", "http", "3000"]).expect("parse sandbox http shortcut");
+        let Commands::Http(args) = cli.command else {
+            panic!("expected HTTP command");
+        };
+        assert_eq!(args.port, 3000);
+        assert_eq!(args.relay.as_str(), "https://relay.tunnel.yshubham.com/");
+        assert!(args.subdomain.is_none());
+    }
+
+    #[test]
+    fn http_shortcut_rejects_port_zero() {
+        assert!(Cli::try_parse_from(["sandbox", "http", "0"]).is_err());
+    }
+
+    #[test]
+    fn parses_custom_http_relay_and_subdomain() {
+        let cli = Cli::try_parse_from([
+            "sandbox",
+            "http",
+            "4321",
+            "--relay",
+            "https://relay.sandbox.example",
+            "--subdomain",
+            "demo",
+        ])
+        .expect("parse custom relay");
+        let Commands::Http(args) = cli.command else {
+            panic!("expected HTTP command");
+        };
+        assert_eq!(args.relay.as_str(), "https://relay.sandbox.example/");
+        assert_eq!(args.subdomain.as_deref(), Some("demo"));
+    }
 }

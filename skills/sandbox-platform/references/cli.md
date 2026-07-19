@@ -57,9 +57,17 @@ sandbox wait "$OPERATION_ID" --timeout 900
 sandbox delete "$SANDBOX_ID" --wait
 ```
 
-## Public tunnels
+## Public sharing
 
-Make the intended HTTP/WebSocket service listen on `0.0.0.0`, then:
+Share a service running on the agent's current machine:
+
+```sh
+sandbox http 3000
+```
+
+The command checks both local IPv4 and IPv6, prints a temporary public HTTPS URL, and stays attached until Ctrl-C. It does not require `SANDBOX_URL`. It prefers an installed `cloudflared` and falls back to the system SSH client with localhost.run. Treat the URL as public and never expose credentials, private data, or admin interfaces.
+
+For a service inside a managed sandbox, make it listen on `0.0.0.0`, then use the controller-managed tunnel commands:
 
 ```sh
 sandbox tunnel create "$SANDBOX_ID" --port 3000
@@ -67,7 +75,7 @@ sandbox tunnel list "$SANDBOX_ID"
 sandbox tunnel delete "$SANDBOX_ID" "$TUNNEL_ID"
 ```
 
-Use `--subdomain review-42` only when the caller needs a stable human-readable label. Every returned URL is public. Do not expose admin interfaces or services containing credentials.
+Use `sandbox tunnel create SANDBOX_ID --port PORT --subdomain review-42` only when the caller needs a stable human-readable label. Managed tunnel availability remains capability-gated by the server.
 
 ## Coding agents
 

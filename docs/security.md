@@ -37,6 +37,8 @@ For production, place the controller behind an OIDC/mTLS gateway that maps ident
 
 Public tunnels are an independent ingress choice. The Docker worker creates one internal network per tunneled sandbox and attaches only that sandbox and the edge. Routes use exact hostnames and are removed with the tunnel or sandbox. URLs are unauthenticated and Internet-facing; confidential/restricted workloads, raw TCP, and requested tunnel authentication are rejected. Put an identity-aware proxy in front if your deployment needs user authentication.
 
+Local relay tunnels are also opt-in and Internet-facing. The controller creates one unguessable exact-host route only after an outbound CLI WebSocket connects, bounds the global/per-client session count and relayed body size, applies a hard TTL, and deletes the route on disconnect or restart. The CLI targets only the selected loopback port and rejects absolute request targets. A deployment can require the operator bearer token for relay creation; that token does not authenticate visitors to the resulting URL. Anonymous relay creation is appropriate only for an intentionally public developer service behind provider-level WAF and rate controls.
+
 Orange-cloud DNS alone is not a complete origin boundary: a public origin can still be discovered or reached outside Cloudflare. The Cloudflare Tunnel overlay uses an outbound-only connector and an internal edge with no published ingress ports. After end-to-end verification, enforce the boundary with host and provider firewalls so the controller, port 80, and port 443 are not publicly reachable. Keep the connector token in a file-backed secret and rotate it if exposed.
 
 The fixed proxied wildcard compatibility profile returns HTTP URLs and provides no transport confidentiality. It exists only for operators who cannot change a proxied multi-level record or provision its edge certificate. Never use it for credentials, private source, authenticated sessions, or confidential/restricted workloads. A proxied DNS answer hides the origin address from ordinary lookup but does not prove that the origin cannot be discovered or bypassed.
@@ -60,7 +62,7 @@ The fixed proxied wildcard compatibility profile returns HTTP URLs and provides 
 - No built-in secret broker, image signature verifier, or domain egress proxy.
 - PostgreSQL writes are not yet wrapped in one transaction/outbox.
 - Worker startup does not yet reconcile pre-existing runtime instances.
-- Public HTTP/WebSocket tunnels do not include built-in user authentication or abuse/rate limiting.
+- Public HTTP/WebSocket URLs do not include visitor authentication, bandwidth quotas, or durable distributed abuse controls.
 
 Treat these as explicit engineering gates, not documentation footnotes.
 

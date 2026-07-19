@@ -10,6 +10,19 @@ For a sandbox created with denied networking, the worker temporarily detaches Do
 
 The current implementation supports public HTTP and WebSocket services. It deliberately rejects raw TCP and `authenticated = true` until those paths have real enforcement. It also rejects public tunnels for `confidential` or `restricted` workloads.
 
+## Share a workstation service
+
+`sandbox http PORT` is the ephemeral local counterpart to a managed sandbox tunnel. The CLI opens one outbound WebSocket to `relay.<base-domain>`, the controller creates a collision-resistant exact-host route, and the edge sends requests back over that session to the detected IPv4 (`127.0.0.1`) or IPv6 (`::1`) loopback listener. Regular HTTP and WebSocket upgrades are supported. The local request uses the loopback host and omits the public Origin, which lets Vite and similar development servers keep their host allowlist intact.
+
+```sh
+sandbox http 4321
+# https://local-<random>.tunnel.example.com
+```
+
+The command must remain running. Ctrl-C, relay disconnect, controller restart, or the configured TTL removes the route. `--subdomain` requests a temporary readable label; it does not reserve ownership. The public URL has no visitor authentication.
+
+Self-hosted deployments enable `tunnel.local_relay_enabled`, reserve `relay.<base-domain>` to the controller, and share `tunnel.config_dir` with the HTTP edge. Requiring the operator bearer token is the safe default. If an operator intentionally allows anonymous relay creation, provider-level WAF/rate limits and conservative controller session limits are required.
+
 ```mermaid
 flowchart LR
     U["Public client"] --> C["Cloud or direct TLS edge"]
@@ -104,6 +117,7 @@ flowchart LR
    | Public hostname | Internal service |
    |---|---|
    | `sandbox.example.com` | `http://controller:8080` |
+   | `relay.tunnel.example.com` | `http://controller:8080` |
    | `*.tunnel.example.com` | `http://tunnel-edge:8080` |
 
    Let Cloudflare create the proxied `CNAME` records to `<tunnel-id>.cfargotunnel.com`. Remove any conflicting origin-address `A`/`AAAA` record only after the connector and replacement routes are ready.

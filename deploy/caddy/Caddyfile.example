@@ -10,6 +10,13 @@
 	reverse_proxy controller:8080
 }
 
+relay.{$SANDBOX_TUNNEL_DOMAIN} {
+	tls {
+		on_demand
+	}
+	reverse_proxy controller:8080
+}
+
 *.{$SANDBOX_TUNNEL_DOMAIN} {
 	tls {
 		on_demand

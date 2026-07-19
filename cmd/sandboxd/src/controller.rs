@@ -1,3 +1,5 @@
+mod local_relay;
+
 use std::{collections::BTreeSet, sync::Arc, time::Duration as StdDuration};
 
 use axum::{
@@ -40,6 +42,7 @@ struct AppState {
     store: StoreRef,
     bus: BusRef,
     scheduler: AegisScheduler,
+    local_relays: local_relay::LocalRelayRegistry,
 }
 
 pub async fn serve(
@@ -50,11 +53,13 @@ pub async fn serve(
     cancel: CancellationToken,
 ) -> anyhow::Result<()> {
     let store_name = store.backend_name();
+    let local_relays = local_relay::LocalRelayRegistry::initialize(&config.tunnel.config_dir)?;
     let state = AppState {
         config: config.clone(),
         store,
         bus,
         scheduler,
+        local_relays,
     };
     let reaper_state = state.clone();
     let reaper_cancel = cancel.clone();
@@ -74,11 +79,13 @@ pub async fn serve(
             axum::routing::delete(delete_tunnel),
         )
         .route("/v1/tunnels/authorize", get(authorize_tunnel_domain))
+        .route("/v1/local-tunnels/connect", get(local_relay::connect))
         .route("/v1/operations/{id}", get(get_operation))
         .route("/v1/nodes/register", post(register_node))
         .route("/v1/nodes/{id}/heartbeat", post(heartbeat_node))
         .route("/v1/nodes/{id}/assignments", get(lease_assignments))
         .route("/v1/assignments/complete", post(complete_assignment))
+        .fallback(local_relay::proxy)
         .layer(DefaultBodyLimit::max(
             config.server.request_body_limit_bytes,
         ))
@@ -118,6 +125,16 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
                 .enabled
                 .then_some(vec![ExposureProtocol::Http])
                 .unwrap_or_default(),
+            local_relay_enabled: state.config.tunnel.enabled
+                && state.config.tunnel.local_relay_enabled,
+            local_relay_url: (state.config.tunnel.enabled
+                && state.config.tunnel.local_relay_enabled)
+                .then(|| {
+                    state.config.tunnel.base_domain.as_ref().map(|domain| {
+                        format!("{}://relay.{domain}", state.config.tunnel.public_scheme)
+                    })
+                })
+                .flatten(),
         },
     })
 }
@@ -353,6 +370,11 @@ async fn authorize_tunnel_domain(
     };
     if !domain.ends_with(&suffix) || domain.len() <= suffix.len() {
         return StatusCode::NOT_FOUND;
+    }
+    if state.config.tunnel.local_relay_enabled
+        && (domain == format!("relay{suffix}") || state.local_relays.contains(&domain).await)
+    {
+        return StatusCode::NO_CONTENT;
     }
     match state.store.find_tunnel_by_hostname(&domain).await {
         Ok(Some(_)) => StatusCode::NO_CONTENT,

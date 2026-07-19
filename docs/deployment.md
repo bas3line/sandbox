@@ -108,7 +108,7 @@ The installer supports Linux and macOS on amd64/arm64 and installs `sandbox`, `s
 Tagged releases also receive signed SLSA provenance through GitHub artifact attestations. Verify a downloaded archive before installation:
 
 ```sh
-gh attestation verify sandbox_v0.1.1_linux_amd64.tar.gz --repo bas3line/sandbox
+gh attestation verify sandbox_v0.1.5_linux_amd64.tar.gz --repo bas3line/sandbox
 ```
 
 ## PostgreSQL

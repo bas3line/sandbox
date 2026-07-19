@@ -1,6 +1,6 @@
 ---
 name: sandbox-platform
-description: Operate and configure self-hosted Sandbox environments through the sandbox CLI or sandbox-mcp. Use when creating disposable remote coding workspaces, executing untrusted repositories or generated code away from the host, publishing an HTTP or WebSocket service, configuring custom wildcard domains or Cloudflare HTTPS ingress, launching Codex, Claude Code, OpenCode, Pi, Aider, Goose, or CommandCode, inspecting asynchronous lifecycle operations, diagnosing scheduling or capacity, and cleaning up remote sandboxes.
+description: Operate and configure self-hosted Sandbox environments through the sandbox CLI or sandbox-mcp. Use when creating disposable remote coding workspaces, executing untrusted repositories or generated code away from the host, sharing a local frontend or API at a temporary public URL, publishing a managed-sandbox HTTP or WebSocket service, configuring custom wildcard domains or Cloudflare HTTPS ingress, launching Codex, Claude Code, OpenCode, Pi, Aider, Goose, or CommandCode, inspecting asynchronous lifecycle operations, diagnosing scheduling or capacity, and cleaning up remote sandboxes.
 ---
 
 # Sandbox Platform
@@ -15,7 +15,7 @@ Use the authenticated Sandbox controller for remote execution. Treat agent instr
 4. Classify repository trust, generated-code execution, secret need, data sensitivity, network need, resources, and TTL before creation.
 5. Create with `isolation: auto` unless the caller explicitly requires `microvm`. Do not weaken a server isolation decision to obtain capacity.
 6. Wait for creation to finish. Execute commands as argv arrays, not interpolated shell strings.
-7. When public access is required, bind the intended service to `0.0.0.0`, expose only that port, use the returned URL exactly, report it as public, and remove the route after use.
+7. When sharing a service on the caller's machine, use `sandbox http PORT` and keep it attached until sharing should stop. For a service inside a managed sandbox, bind to `0.0.0.0`, expose only that port with `sandbox tunnel`, use the returned URL exactly, and remove the route after use. Report every returned URL as public.
 8. Inspect operation state, command exit code, stderr, and `truncated`. Recover only from the observed failure.
 9. Delete disposable sandboxes and wait for cleanup unless the caller explicitly asks to retain one.
 
@@ -61,4 +61,4 @@ Read [references/operations.md](references/operations.md) for states, failure co
 
 ## Report results
 
-Return the sandbox ID, selected isolation, lifecycle state, operation ID, exit code, truncated-output status, public tunnel URL and state when relevant, and cleanup result. Do not claim that a sandbox is ready until its create operation succeeds. Never describe a tunnel URL as private.
+Return the sandbox ID, selected isolation, lifecycle state, operation ID, exit code, truncated-output status, public URL and provider or managed-tunnel state when relevant, and cleanup result. Do not claim that a sandbox is ready until its create operation succeeds. Never describe a public URL as private.

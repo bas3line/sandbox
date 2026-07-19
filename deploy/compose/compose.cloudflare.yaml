@@ -2,6 +2,7 @@ name: sandbox
 
 # Outbound-only Cloudflare ingress. Configure the remotely managed tunnel with:
 #   SANDBOX_DOMAIN                  -> http://controller:8080
+#   relay.SANDBOX_TUNNEL_DOMAIN     -> http://controller:8080
 #   *.SANDBOX_TUNNEL_DOMAIN         -> http://tunnel-edge:8080
 #
 # Keep SANDBOX_PORT=127.0.0.1:8080, SANDBOX_TUNNEL_ENTRYPOINT=web, and

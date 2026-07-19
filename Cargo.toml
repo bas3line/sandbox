@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.97.1"
 authors = ["Sandbox contributors"]
@@ -37,6 +37,7 @@ http = "1.4.2"
 openssl-sys = { version = "0.9.117", features = ["vendored"] }
 pq-sys = { version = "0.7.5", features = ["bundled"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+rustls = { version = "0.23.42", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -45,6 +46,7 @@ subtle = "2.6.1"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.53.0", features = ["full"] }
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 tokio-util = "0.7.18"
 tower-http = { version = "0.7.0", features = ["catch-panic", "cors", "limit", "request-id", "timeout", "trace"] }
 tracing = "0.1.44"
@@ -53,12 +55,12 @@ url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.24.0", features = ["serde", "v7"] }
 zeroize = { version = "1.8.2", features = ["derive"] }
 
-sandbox-aegis = { version = "0.1.1", path = "crates/aegis" }
-sandbox-client = { version = "0.1.1", path = "crates/client" }
-sandbox-core = { version = "0.1.1", path = "crates/core" }
-sandbox-events = { version = "0.1.1", path = "crates/events" }
-sandbox-runtime = { version = "0.1.1", path = "crates/runtime" }
-sandbox-storage = { version = "0.1.1", path = "crates/storage" }
+sandbox-aegis = { version = "0.1.5", path = "crates/aegis" }
+sandbox-client = { version = "0.1.5", path = "crates/client" }
+sandbox-core = { version = "0.1.5", path = "crates/core" }
+sandbox-events = { version = "0.1.5", path = "crates/events" }
+sandbox-runtime = { version = "0.1.5", path = "crates/runtime" }
+sandbox-storage = { version = "0.1.5", path = "crates/storage" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
