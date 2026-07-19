@@ -57,23 +57,29 @@ sandbox delete "$ID" --wait
 
 Deletion removes runtime resources. The stopped control-plane record remains for audit.
 
-## Public tunnels
-
-The service must bind `0.0.0.0` inside the sandbox. Then create, inspect, and remove its public route:
+## Share a local service
 
 ```sh
 sandbox http 3000
+sandbox http 4321 --provider cloudflare
+```
+
+`sandbox http PORT` checks that the port is listening on local IPv4 or IPv6, starts a temporary public tunnel, prints its HTTPS URL, and stays attached until Ctrl-C. It does not contact `SANDBOX_URL` and does not require a running Sandbox controller.
+
+The default `--provider auto` prefers an installed `cloudflared`; if it is unavailable, it uses the system SSH client with [localhost.run](https://localhost.run/). Override it with `--provider cloudflare` or `--provider localhost-run`, or set `SANDBOX_HTTP_PROVIDER`. [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) are intended for development and testing. The localhost.run path is a third-party SSH relay. Treat either URL as public and do not share admin panels, credentials, or private data.
+
+## Public tunnels from managed sandboxes
+
+A service inside a managed sandbox must bind `0.0.0.0`. Then create, inspect, and remove its controller-managed route:
+
+```sh
 sandbox tunnel create "$ID" --port 3000
 sandbox tunnel create "$ID" --port 8080 --subdomain review-42
 sandbox tunnel list "$ID"
 sandbox tunnel delete "$ID" "$TUNNEL_ID"
 ```
 
-`sandbox http PORT` is the fast sharing path for a frontend or API. It uses `SANDBOX_ID` (or `--sandbox ID`) when set; otherwise it selects the tenant's only running sandbox. It fails rather than guessing when multiple sandboxes are running. Use `--tenant` to change the automatic-selection tenant and `--subdomain` for a stable label.
-
-The shortcut first checks `/healthz` and is unavailable unless the server advertises enabled HTTP public URLs. If the selected port already has an active tunnel, it prints the existing URL instead of creating a duplicate. The server still enforces sensitivity, worker capability, tunnel count, and protocol policy.
-
-Tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. Treat every printed URL as public. See [tunnels.md](tunnels.md).
+Controller-managed tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. The server enforces sensitivity, worker capability, tunnel count, and protocol policy. Use `--subdomain` only for a stable label. See [tunnels.md](tunnels.md).
 
 ## Agents
 

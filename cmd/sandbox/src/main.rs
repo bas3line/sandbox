@@ -1,5 +1,8 @@
 use std::{
     collections::BTreeMap,
+    env,
+    path::{Path, PathBuf},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -9,14 +12,19 @@ use sandbox_client::SandboxClient;
 use sandbox_core::{
     OperationId, SandboxId, TunnelId,
     agent::{built_in_agent_profiles, find_agent_profile},
-    api::{CreateTunnelRequest, ExecSandboxRequest, TunnelCapabilities},
+    api::{CreateTunnelRequest, ExecSandboxRequest},
     model::{
         CommandSpec, DataSensitivity, ExposureProtocol, IsolationPreference, NetworkMode,
-        Operation, OperationState, PortExposure, ResourceSpec, Sandbox, SandboxSpec, SandboxState,
-        TunnelState, WorkloadSignals,
+        Operation, OperationState, PortExposure, ResourceSpec, SandboxSpec, WorkloadSignals,
     },
 };
 use secrecy::SecretString;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    net::TcpStream,
+    process::Command,
+    sync::mpsc,
+};
 use url::Url;
 
 #[derive(Debug, Parser)]
@@ -69,7 +77,7 @@ enum Commands {
         #[command(subcommand)]
         command: TunnelCommands,
     },
-    /// Share an HTTP service from the linked or only running sandbox.
+    /// Share a local HTTP service at a temporary public URL.
     Http(HttpArgs),
     /// Print MCP client configuration for sandbox-mcp.
     McpConfig,
@@ -129,21 +137,17 @@ struct ExecArgs {
 
 #[derive(Debug, Args)]
 struct HttpArgs {
-    /// HTTP service port inside the sandbox.
+    /// Local HTTP service port to share.
     #[arg(value_parser = parse_port)]
     port: u16,
-    /// Sandbox to share. Defaults to SANDBOX_ID or the tenant's only running sandbox.
-    #[arg(long = "sandbox", env = "SANDBOX_ID")]
-    sandbox: Option<SandboxId>,
-    /// Tenant used when automatically selecting the only running sandbox.
-    #[arg(long, env = "SANDBOX_TENANT", default_value = "default")]
-    tenant: String,
-    /// Optional stable public subdomain.
-    #[arg(long)]
-    subdomain: Option<String>,
-    /// Return before the public route is active.
-    #[arg(long)]
-    no_wait: bool,
+    /// Tunnel provider. Auto prefers cloudflared and falls back to SSH via localhost.run.
+    #[arg(
+        long,
+        env = "SANDBOX_HTTP_PROVIDER",
+        value_enum,
+        default_value = "auto"
+    )]
+    provider: HttpProvider,
 }
 
 #[derive(Debug, Subcommand)]
@@ -205,6 +209,13 @@ enum SensitivityArg {
     Internal,
     Confidential,
     Restricted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum HttpProvider {
+    Auto,
+    Cloudflare,
+    LocalhostRun,
 }
 
 #[tokio::main]
@@ -327,7 +338,7 @@ async fn main() -> Result<()> {
         }
         Commands::Agent { command } => run_agent(command, &client, cli.json).await?,
         Commands::Tunnel { command } => run_tunnel(command, &client, cli.json).await?,
-        Commands::Http(args) => run_http(args, &client, cli.json).await?,
+        Commands::Http(args) => run_http(args, cli.json).await?,
         Commands::McpConfig => {
             print_json(
                 &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":cli.server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
@@ -337,124 +348,228 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_http(args: HttpArgs, client: &SandboxClient, json: bool) -> Result<()> {
-    let health = client
-        .health()
-        .await
-        .context("check whether this Sandbox server supports public URLs")?;
-    validate_http_capabilities(&health.tunnels)?;
+async fn run_http(args: HttpArgs, json: bool) -> Result<()> {
+    ensure_local_listener(args.port).await?;
+    let (provider, executable) = resolve_http_provider(args.provider)?;
+    let mut command = provider_command(provider, &executable, args.port);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
-    let sandbox = match args.sandbox {
-        Some(id) => client.get_sandbox(id).await?,
-        None => {
-            let sandboxes = client.list_sandboxes(Some(&args.tenant)).await?;
-            let id = select_only_running_sandbox(&sandboxes, &args.tenant)?;
-            client.get_sandbox(id).await?
+    let mut child = command.spawn().with_context(|| {
+        format!(
+            "start the {} public tunnel helper at {}",
+            provider_name(provider),
+            executable.display()
+        )
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("capture tunnel helper stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("capture tunnel helper stderr")?;
+    let (url_tx, mut url_rx) = mpsc::unbounded_channel();
+    let stdout_task = tokio::spawn(find_public_url(stdout, provider, url_tx.clone()));
+    let stderr_task = tokio::spawn(find_public_url(stderr, provider, url_tx));
+
+    let public_url = match tokio::time::timeout(Duration::from_secs(30), url_rx.recv()).await {
+        Ok(Some(url)) => url,
+        Ok(None) => {
+            let status = child
+                .wait()
+                .await
+                .context("wait for public tunnel helper")?;
+            bail!(
+                "{} exited before issuing a public URL ({status})",
+                provider_name(provider)
+            );
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            bail!(
+                "{} did not issue a public URL within 30 seconds; check your internet connection or try --provider {}",
+                provider_name(provider),
+                alternative_provider(provider)
+            );
         }
     };
-    if sandbox.state != SandboxState::Running {
-        bail!(
-            "sandbox {} is {}; HTTP sharing requires a running sandbox",
-            sandbox.id,
-            format!("{:?}", sandbox.state).to_lowercase()
-        );
+
+    if json {
+        print_json(&serde_json::json!({
+            "local_url": format!("http://localhost:{}", args.port),
+            "provider": provider_name(provider),
+            "public_url": public_url,
+        }))?;
+    } else {
+        println!("{public_url}");
+        eprintln!("Public URL: anyone with this address can access your local service.");
+        eprintln!("Press Ctrl-C to stop sharing.");
     }
 
-    if let Some(tunnel) = sandbox
-        .tunnels
-        .iter()
-        .find(|tunnel| tunnel.container_port == args.port)
-    {
-        if tunnel.state == TunnelState::Active {
-            if let Some(requested) = args.subdomain.as_deref()
-                && requested != tunnel.subdomain
-            {
-                bail!(
-                    "port {} is already shared at {}; remove tunnel {} before changing its subdomain to {requested:?}",
-                    args.port,
-                    tunnel.public_url,
-                    tunnel.id
-                );
+    tokio::select! {
+        status = child.wait() => {
+            let status = status.context("wait for public tunnel helper")?;
+            if !status.success() {
+                bail!("{} tunnel exited unexpectedly ({status})", provider_name(provider));
             }
-            if json {
-                print_json(&serde_json::json!({
-                    "tunnel": tunnel,
-                    "operation": null,
-                    "reused": true,
-                }))?;
-            } else {
-                println!("{}", tunnel.public_url);
-            }
-            return Ok(());
         }
-        bail!(
-            "port {} already has tunnel {} in {} state; inspect it with `sandbox tunnel list {}`",
-            args.port,
-            tunnel.id,
-            format!("{:?}", tunnel.state).to_lowercase(),
-            sandbox.id
-        );
+        signal = tokio::signal::ctrl_c() => {
+            signal.context("listen for Ctrl-C")?;
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
     }
 
-    run_tunnel(
-        TunnelCommands::Create {
-            id: sandbox.id,
-            port: args.port,
-            subdomain: args.subdomain,
-            no_wait: args.no_wait,
-        },
-        client,
-        json,
-    )
-    .await
-}
-
-fn validate_http_capabilities(capabilities: &TunnelCapabilities) -> Result<()> {
-    if !capabilities.enabled {
-        bail!(
-            "public URL sharing is disabled on this Sandbox server; ask the operator to enable public tunnels"
-        );
-    }
-    if !capabilities.protocols.contains(&ExposureProtocol::Http) {
-        bail!("this Sandbox server does not advertise HTTP public URLs");
-    }
-    if capabilities
-        .base_domain
-        .as_deref()
-        .is_none_or(str::is_empty)
-        || capabilities
-            .public_scheme
-            .as_deref()
-            .is_none_or(str::is_empty)
-    {
-        bail!("public URL sharing is enabled but incomplete on this Sandbox server");
-    }
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
     Ok(())
 }
 
-fn select_only_running_sandbox(sandboxes: &[Sandbox], tenant: &str) -> Result<SandboxId> {
-    select_only_sandbox_id(
-        sandboxes
-            .iter()
-            .filter(|sandbox| sandbox.state == SandboxState::Running)
-            .map(|sandbox| sandbox.id),
-        tenant,
+async fn ensure_local_listener(port: u16) -> Result<()> {
+    let addresses: [std::net::SocketAddr; 2] = [
+        ([127, 0, 0, 1], port).into(),
+        ([0, 0, 0, 0, 0, 0, 0, 1], port).into(),
+    ];
+    for address in addresses {
+        if matches!(
+            tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(address)).await,
+            Ok(Ok(_))
+        ) {
+            return Ok(());
+        }
+    }
+    bail!(
+        "nothing is listening on localhost:{port}; start your app first, then run `sandbox http {port}`"
     )
 }
 
-fn select_only_sandbox_id(
-    mut running: impl Iterator<Item = SandboxId>,
-    tenant: &str,
-) -> Result<SandboxId> {
-    let first = running.next();
-    match (first, running.next()) {
-        (Some(id), None) => Ok(id),
-        (None, _) => bail!(
-            "no running sandbox found for tenant {tenant:?}; set SANDBOX_ID or pass --sandbox"
-        ),
-        (Some(_), Some(_)) => bail!(
-            "multiple running sandboxes found for tenant {tenant:?}; set SANDBOX_ID or pass --sandbox"
-        ),
+fn resolve_http_provider(requested: HttpProvider) -> Result<(HttpProvider, PathBuf)> {
+    match requested {
+        HttpProvider::Auto => {
+            if let Some(path) = find_executable("cloudflared") {
+                return Ok((HttpProvider::Cloudflare, path));
+            }
+            find_ssh()
+                .map(|path| (HttpProvider::LocalhostRun, path))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no public tunnel helper found; install cloudflared or OpenSSH, then retry"
+                    )
+                })
+        }
+        HttpProvider::Cloudflare => find_executable("cloudflared")
+            .map(|path| (HttpProvider::Cloudflare, path))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cloudflared is not installed; install it or use --provider localhost-run"
+                )
+            }),
+        HttpProvider::LocalhostRun => find_ssh()
+            .map(|path| (HttpProvider::LocalhostRun, path))
+            .ok_or_else(|| {
+                anyhow::anyhow!("OpenSSH is not installed; install it or use --provider cloudflare")
+            }),
+    }
+}
+
+fn find_ssh() -> Option<PathBuf> {
+    find_executable("ssh").or_else(|| {
+        [Path::new("/usr/bin/ssh"), Path::new("/bin/ssh")]
+            .into_iter()
+            .find(|path| path.is_file())
+            .map(Path::to_path_buf)
+    })
+}
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|path| {
+        env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+fn provider_command(provider: HttpProvider, executable: &Path, port: u16) -> Command {
+    let mut command = Command::new(executable);
+    match provider {
+        HttpProvider::Cloudflare => {
+            command.args(["tunnel", "--url", &format!("http://localhost:{port}")]);
+        }
+        HttpProvider::LocalhostRun => {
+            command.args([
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-R",
+                &format!("80:localhost:{port}"),
+                "nokey@localhost.run",
+            ]);
+        }
+        HttpProvider::Auto => unreachable!("auto provider must be resolved before launch"),
+    }
+    command
+}
+
+async fn find_public_url<R>(reader: R, provider: HttpProvider, sender: mpsc::UnboundedSender<Url>)
+where
+    R: AsyncRead + Unpin,
+{
+    let mut lines = BufReader::new(reader).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(url) = public_url_in_line(provider, &line) {
+            let _ = sender.send(url);
+        }
+    }
+}
+
+fn public_url_in_line(provider: HttpProvider, line: &str) -> Option<Url> {
+    line.split_whitespace().find_map(|token| {
+        let token = &token[token.find("https://")?..];
+        let token = token.trim_end_matches(|character: char| {
+            !character.is_ascii_alphanumeric()
+                && !matches!(
+                    character,
+                    ':' | '/' | '.' | '-' | '_' | '?' | '=' | '&' | '%'
+                )
+        });
+        let url = Url::parse(token).ok()?;
+        let host = url.host_str()?;
+        let matches_provider = match provider {
+            HttpProvider::Cloudflare => host.ends_with(".trycloudflare.com"),
+            HttpProvider::LocalhostRun => host.ends_with(".lhr.life"),
+            HttpProvider::Auto => false,
+        };
+        (url.scheme() == "https" && matches_provider).then_some(url)
+    })
+}
+
+fn provider_name(provider: HttpProvider) -> &'static str {
+    match provider {
+        HttpProvider::Auto => "auto",
+        HttpProvider::Cloudflare => "cloudflare",
+        HttpProvider::LocalhostRun => "localhost.run",
+    }
+}
+
+fn alternative_provider(provider: HttpProvider) -> &'static str {
+    match provider {
+        HttpProvider::Cloudflare => "localhost-run",
+        HttpProvider::LocalhostRun | HttpProvider::Auto => "cloudflare",
     }
 }
 
@@ -723,8 +838,7 @@ mod tests {
             panic!("expected HTTP command");
         };
         assert_eq!(args.port, 3000);
-        assert_eq!(args.tenant, "default");
-        assert!(args.sandbox.is_none());
+        assert_eq!(args.provider, HttpProvider::Auto);
     }
 
     #[test]
@@ -733,31 +847,52 @@ mod tests {
     }
 
     #[test]
-    fn http_shortcut_requires_enabled_server_capability() {
-        let disabled = TunnelCapabilities::default();
-        assert!(validate_http_capabilities(&disabled).is_err());
-
-        let enabled = TunnelCapabilities {
-            enabled: true,
-            base_domain: Some("tunnel.example.com".into()),
-            public_scheme: Some("https".into()),
-            protocols: vec![ExposureProtocol::Http],
+    fn parses_explicit_http_provider() {
+        let cli = Cli::try_parse_from(["sandbox", "http", "4321", "--provider", "localhost-run"])
+            .expect("parse explicit provider");
+        let Commands::Http(args) = cli.command else {
+            panic!("expected HTTP command");
         };
-        assert!(validate_http_capabilities(&enabled).is_ok());
+        assert_eq!(args.provider, HttpProvider::LocalhostRun);
     }
 
     #[test]
-    fn automatic_http_target_must_be_unambiguous() {
-        let only = SandboxId::new();
+    fn extracts_only_the_expected_provider_url() {
         assert_eq!(
-            select_only_sandbox_id([only].into_iter(), "default")
-                .expect("select only running sandbox"),
-            only
+            public_url_in_line(
+                HttpProvider::LocalhostRun,
+                "site tunneled with tls, https://abc123.lhr.life"
+            )
+            .expect("extract localhost.run URL")
+            .as_str(),
+            "https://abc123.lhr.life/"
         );
-        assert!(select_only_sandbox_id([].into_iter(), "default").is_err());
         assert!(
-            select_only_sandbox_id([SandboxId::new(), SandboxId::new()].into_iter(), "default")
-                .is_err()
+            public_url_in_line(
+                HttpProvider::LocalhostRun,
+                "documentation: https://localhost.run/docs/"
+            )
+            .is_none()
         );
+        assert_eq!(
+            public_url_in_line(
+                HttpProvider::Cloudflare,
+                "INF Your quick Tunnel has been created! url=https://demo.trycloudflare.com"
+            )
+            .expect("extract Cloudflare URL")
+            .as_str(),
+            "https://demo.trycloudflare.com/"
+        );
+    }
+
+    #[tokio::test]
+    async fn detects_a_local_listener() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind local listener");
+        let port = listener.local_addr().expect("listener address").port();
+        ensure_local_listener(port)
+            .await
+            .expect("detect local listener");
     }
 }

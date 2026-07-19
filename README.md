@@ -68,6 +68,8 @@ sandbox agent run codex --tenant platform
 sandbox delete 019f... --wait
 ```
 
+`sandbox http PORT` shares a service running on your current machine and prints a temporary HTTPS URL; it does not require `sandboxd` or `SANDBOX_URL`. It prefers an installed `cloudflared` and otherwise uses the system SSH client with localhost.run. Keep the command running and press Ctrl-C to revoke the URL. Remote services inside a managed sandbox continue to use `sandbox tunnel create SANDBOX_ID --port PORT`.
+
 ## What is already real
 
 | Capability | Status |
