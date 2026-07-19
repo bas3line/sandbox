@@ -6,14 +6,15 @@
 
 mod docker;
 mod external;
+mod tunnel;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use sandbox_core::{
     SandboxId,
-    config::{NodeConfig, RuntimeKind},
-    model::{CommandOutput, CommandSpec, IsolationTier, SandboxSpec},
+    config::{NodeConfig, RuntimeKind, TunnelConfig},
+    model::{CommandOutput, CommandSpec, IsolationTier, SandboxSpec, Tunnel},
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,6 +38,10 @@ pub enum RuntimeError {
     MissingExternalDriver,
     #[error("isolation tier {0:?} is unsupported by this runtime")]
     UnsupportedTier(IsolationTier),
+    #[error("HTTP tunnels are disabled on this worker")]
+    TunnelsDisabled,
+    #[error("runtime tunnel configuration failed: {0}")]
+    Tunnel(String),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,6 +49,8 @@ pub struct RuntimeCapabilities {
     pub name: String,
     pub version: String,
     pub tiers: Vec<IsolationTier>,
+    #[serde(default)]
+    pub supports_http_tunnels: bool,
 }
 
 #[async_trait]
@@ -60,13 +67,20 @@ pub trait SandboxRuntime: Send + Sync {
         id: SandboxId,
         command: &CommandSpec,
     ) -> Result<CommandOutput, RuntimeError>;
+    async fn expose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError>;
+    async fn unexpose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError>;
     async fn delete(&self, id: SandboxId) -> Result<(), RuntimeError>;
 }
 
-pub fn from_config(config: &NodeConfig, output_limit: usize) -> Result<RuntimeRef, RuntimeError> {
+pub fn from_config(
+    config: &NodeConfig,
+    tunnel: &TunnelConfig,
+    output_limit: usize,
+) -> Result<RuntimeRef, RuntimeError> {
     match config.runtime {
         RuntimeKind::Docker => Ok(Arc::new(DockerRuntime::new(
             config.docker_restricted_network.clone(),
+            tunnel.clone(),
             output_limit,
         ))),
         RuntimeKind::External => {

@@ -29,6 +29,8 @@ sandbox create \
   --needs-secrets
 ```
 
+Add repeatable `--expose PORT` or `--expose PORT=SUBDOMAIN` flags to allocate public HTTP/WebSocket URLs during creation. Tunnels must be enabled by the deployment.
+
 Pass an optional detached startup command after `--`. Prefer creating the sandbox first and using `sandbox exec` so operation output is visible.
 
 ## Execute
@@ -54,6 +56,19 @@ sandbox delete "$ID" --wait
 ```
 
 Deletion removes runtime resources. The stopped control-plane record remains for audit.
+
+## Public tunnels
+
+The service must bind `0.0.0.0` inside the sandbox. Then create, inspect, and remove its public route:
+
+```sh
+sandbox tunnel create "$ID" --port 3000
+sandbox tunnel create "$ID" --port 8080 --subdomain review-42
+sandbox tunnel list "$ID"
+sandbox tunnel delete "$ID" "$TUNNEL_ID"
+```
+
+Tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. Treat every printed URL as public. See [tunnels.md](tunnels.md).
 
 ## Agents
 

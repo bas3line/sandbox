@@ -1,0 +1,43 @@
+name: sandbox
+
+# Merge this file with compose.yaml when Caddy already owns public ports 80/443:
+# docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.caddy.yaml \
+#   --profile caddy-edge up --build -d
+
+services:
+  tunnel-edge:
+    image: traefik:v3.7.8
+    container_name: sandbox-tunnel-edge
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:8080
+    profiles: ["caddy-edge"]
+    volumes:
+      - tunnel-routes:/etc/traefik/dynamic:ro
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    environment:
+      SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-sandbox.example.com}
+      SANDBOX_TUNNEL_DOMAIN: ${SANDBOX_TUNNEL_DOMAIN:-tunnel.example.com}
+      SANDBOX_ACME_EMAIL: ${SANDBOX_ACME_EMAIL:-admin@example.com}
+    profiles: ["caddy-edge"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../caddy/Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      controller:
+        condition: service_healthy
+      tunnel-edge:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

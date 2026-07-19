@@ -109,6 +109,7 @@ impl AegisScheduler {
         if !node.is_healthy(now, self.policy.heartbeat_timeout_seconds)
             || node.pressure > self.policy.max_host_pressure
             || !node.supported_tiers.contains(&isolation)
+            || (!spec.exposures.is_empty() && !node.supports_http_tunnels)
             || !spec.resources.fits_within(&node.capacity.available)
             || (node.capacity.max_sandboxes > 0
                 && node.capacity.running_sandboxes >= node.capacity.max_sandboxes)
@@ -266,8 +267,8 @@ mod tests {
     use sandbox_core::{
         NodeId,
         model::{
-            DataSensitivity, IsolationPreference, IsolationTier, NetworkMode, NodeCapacity,
-            NodeRecord, ResourceSpec, SandboxSpec, WorkloadSignals,
+            DataSensitivity, ExposureProtocol, IsolationPreference, IsolationTier, NetworkMode,
+            NodeCapacity, NodeRecord, PortExposure, ResourceSpec, SandboxSpec, WorkloadSignals,
         },
     };
 
@@ -319,6 +320,7 @@ mod tests {
             },
             pressure,
             draining: false,
+            supports_http_tunnels: true,
             last_seen: Utc::now(),
         }
     }
@@ -378,5 +380,21 @@ mod tests {
             Utc::now(),
         );
         assert!(matches!(decision, Ok(value) if value.isolation == IsolationTier::Microvm));
+    }
+
+    #[test]
+    fn exposure_requires_a_tunnel_capable_worker() {
+        let mut workload = spec();
+        workload.exposures.push(PortExposure {
+            container_port: 3_000,
+            protocol: ExposureProtocol::Http,
+            subdomain: None,
+            authenticated: false,
+        });
+        let mut incapable = node("no-edge", 0.1, false);
+        incapable.supports_http_tunnels = false;
+        let result =
+            AegisScheduler::new(Default::default()).schedule(&workload, &[incapable], Utc::now());
+        assert!(result.is_err());
     }
 }

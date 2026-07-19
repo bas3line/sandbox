@@ -22,6 +22,12 @@ The CLI is a typed API client for humans, automation, and agents. It supports JS
 
 The MCP server is a newline-delimited JSON-RPC stdio process. It exposes the same operations as schema-defined tools and writes protocol messages only to stdout.
 
+### Tunnel edge
+
+The optional HTTP/WebSocket edge consumes exact-host route files from Docker workers. Each tunneled sandbox gets its own internal Docker network shared only with the edge container. The controller persists desired tunnel state and authorizes active hostnames; workers own route and network reconciliation.
+
+Ingress is replaceable. The direct profile publishes Traefik, Caddy can terminate on-demand TLS, and the Cloudflare profile keeps the edge internal while an outbound-only `cloudflared` connector carries proxied traffic from Cloudflare. Connector choice does not change persisted tunnel state or the CLI/MCP contract.
+
 ## State transitions
 
 ```mermaid
@@ -32,6 +38,7 @@ stateDiagram-v2
     Scheduled --> Failed: scheduling assignment fails
     Creating --> Failed: runtime create fails
     Running --> Running: exec completes
+    Running --> Running: tunnel add/remove completes
     Running --> Stopping: delete or TTL expiry
     Stopping --> Stopped: runtime delete succeeds
     Stopping --> Failed: runtime delete fails
@@ -49,7 +56,7 @@ The in-memory bus requires no external service. The NATS backend publishes lifec
 
 ## Runtime boundary
 
-The built-in Docker adapter applies read-only root filesystems, drops all capabilities, enables `no-new-privileges`, caps CPU/RAM/PIDs, creates bounded tmpfs mounts, and chooses an explicit network. It is appropriate for dedicated worker hosts and trusted tenants.
+The built-in Docker adapter applies read-only root filesystems, drops all capabilities, enables `no-new-privileges`, caps CPU/RAM/PIDs, creates bounded tmpfs mounts, and chooses an explicit network. Tunnel exposure adds a separate internal edge network scoped to one sandbox rather than joining tenant containers to a shared proxy network. Docker mode is appropriate for dedicated worker hosts and trusted tenants.
 
 The external driver protocol lets an organization attach Firecracker, Kata Containers, gVisor, Cloud Hypervisor, Kubernetes, or a private isolation platform without linking that runtime into the control plane. See [runtime-driver.md](runtime-driver.md).
 

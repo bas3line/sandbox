@@ -8,9 +8,9 @@ request=$(/bin/dd bs=64k 2>/dev/null)
 
 case "$action" in
   probe)
-    printf '%s\n' '{"success":true,"result":{"name":"fake-test-runtime","version":"1","tiers":["container","microvm"]},"error":null}'
+    printf '%s\n' '{"success":true,"result":{"name":"fake-test-runtime","version":"1","tiers":["container","microvm"],"supports_http_tunnels":true},"error":null}'
     ;;
-  create|delete)
+  create|delete|expose|unexpose)
     printf '%s\n' '{"success":true,"result":{},"error":null}'
     ;;
   exec)

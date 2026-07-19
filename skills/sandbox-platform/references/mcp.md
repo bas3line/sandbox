@@ -23,6 +23,8 @@ Cursor, Claude Desktop, Windsurf, Cline, Roo Code, and Gemini Code Assist use th
 
 Pi, Aider, CommandCode, and hosts without native MCP use the `sandbox` CLI with this skill. `sandbox-mcp` is a local stdio bridge. It connects to the public controller API and does not need worker, database, Docker, or NATS access. Never place `SANDBOX_TOKEN` in a committed client config.
 
+Cloudflare connector credentials, Origin CA keys, DNS, and TLS settings stay with the deployment operator. Never request or pass them through MCP, agent configuration, sandbox environment variables, or task arguments. Direct Caddy, proxied Cloudflare Full (strict), and an origin-hidden Cloudflare Tunnel all use the same client tool contract.
+
 ## Tools
 
 | Tool | Use |
@@ -31,22 +33,28 @@ Pi, Aider, CommandCode, and hosts without native MCP use the `sandbox` CLI with 
 | `sandbox_create` | Create with resources, policy signals, labels, and placement |
 | `sandbox_exec` | Execute argv; wait by default or return an operation |
 | `sandbox_list` | List visible sandboxes, optionally by tenant |
-| `sandbox_inspect` | Read one sandbox and its selected isolation |
+| `sandbox_inspect` | Read one sandbox, selected isolation, and tunnels |
+| `sandbox_tunnel_create` | Publish one HTTP/WebSocket port and wait by default |
+| `sandbox_tunnel_delete` | Remove a public route and wait by default |
 | `sandbox_delete` | Remove runtime resources; wait by default |
 | `sandbox_operation` | Read one asynchronous operation snapshot |
 | `sandbox_wait` | Poll an operation with a bounded timeout |
 | `sandbox_agent_list` | Discover built-in coding-agent profiles |
 | `sandbox_agent_run` | Create from a coding-agent profile |
 
-For `sandbox_create`, supply `tenant` and `image`. Optional fields cover startup `command`, non-secret `env`, CPU, memory, disk, PIDs, TTL, network, isolation, sensitivity, risk signals, labels, required worker labels, preferred region, and anti-affinity keys.
+For `sandbox_create`, supply `tenant` and `image`. Optional fields cover startup `command`, non-secret `env`, CPU, memory, disk, PIDs, TTL, network, isolation, sensitivity, risk signals, labels, required worker labels, preferred region, anti-affinity keys, and HTTP/WebSocket `exposures`.
 
 For `sandbox_exec`, supply `sandbox_id` and `argv`. Optional fields are `cwd`, non-secret `env`, `timeout_seconds`, and `wait`.
+
+For `sandbox_tunnel_create`, supply `sandbox_id` and `container_port`; optionally request a lowercase `subdomain`. The service must listen on `0.0.0.0`. Treat the returned URL as Internet-facing, use its domain and scheme exactly as returned, and delete it when no longer required. An `http://` result is transport-insecure; the client must not rewrite it to HTTPS.
 
 ## Resources
 
 - Read `sandbox://capabilities` before claiming a deployment feature exists.
 - Read `sandbox://agents` to discover profile defaults without a controller call.
 - Read `sandbox://workflow` for the compact lifecycle runbook.
+
+`sandbox://capabilities` exposes structured `public_tunnels` metadata. Domain/TLS policy is deployment-managed, URL schemes are server-configured, and tunnel authentication remains explicitly unimplemented.
 
 ## Prompts
 

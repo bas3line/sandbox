@@ -8,4 +8,4 @@ pub mod id;
 pub mod model;
 
 pub use error::{CoreError, CoreResult};
-pub use id::{AssignmentId, NodeId, OperationId, SandboxId};
+pub use id::{AssignmentId, NodeId, OperationId, SandboxId, TunnelId};

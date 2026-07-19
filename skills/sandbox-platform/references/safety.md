@@ -27,6 +27,16 @@ Docker workers are appropriate for dedicated or trusted worker hosts. If a deplo
 
 Keep destructive production operations outside a general coding sandbox. Route them through a typed, approved job runner with short-lived identity and audit logging.
 
+## Public exposure
+
+Every tunnel URL is Internet-facing even when its subdomain is difficult to guess. Expose only an intended HTTP/WebSocket service, make it listen on `0.0.0.0`, and remove the tunnel as soon as it is no longer needed. Never publish databases, Docker APIs, debug consoles, credential-bearing admin interfaces, or services processing confidential/restricted data. Tunnel authentication is rejected until the deployment has a real identity-aware proxy; a URL is not an access-control mechanism.
+
+When an operator requires a hidden origin, prefer an outbound connector such as the documented Cloudflare Tunnel overlay and close public origin ingress only after end-to-end verification. Orange-cloud DNS by itself does not prevent direct-origin bypass. A nested Cloudflare wildcard needs an edge certificate that explicitly covers that wildcard depth.
+
+For a proxied origin, require Cloudflare Full (strict) with an unexpired hostname-matching public or Origin CA certificate. Never weaken the zone to Flexible to make a route pass. Store the Origin CA private key only on the server; never provide it to MCP, an agent, or a sandbox workload.
+
+Treat any `http://` tunnel URL as transport-insecure even when its DNS record is proxied. Do not send credentials, private code, authenticated cookies, or sensitive data through the fixed-wildcard HTTP compatibility mode.
+
 ## Cleanup
 
 Request deletion and wait for completion. TTL is a backstop, not a substitute for cleanup. When deletion times out, inspect the original operation before issuing another delete.

@@ -4,7 +4,10 @@ use secrecy::SecretString;
 use serde::Deserialize;
 use url::Url;
 
-use crate::{CoreResult, model::ResourceSpec};
+use crate::{
+    CoreError, CoreResult,
+    model::{ResourceSpec, validate_dns_label},
+};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SandboxConfig {
@@ -18,6 +21,152 @@ pub struct SandboxConfig {
     pub node: NodeConfig,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub tunnel: TunnelConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TunnelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub base_domain: Option<String>,
+    #[serde(default = "default_public_scheme")]
+    pub public_scheme: String,
+    #[serde(default = "default_tunnel_network_prefix")]
+    pub docker_network_prefix: String,
+    #[serde(default = "default_tunnel_config_dir")]
+    pub config_dir: String,
+    #[serde(default = "default_tunnel_edge_container")]
+    pub edge_container: String,
+    #[serde(default = "default_tunnel_entrypoint")]
+    pub edge_entrypoint: String,
+    #[serde(default = "default_true")]
+    pub edge_tls: bool,
+    #[serde(default = "default_tunnel_cert_resolver")]
+    pub edge_cert_resolver: Option<String>,
+    #[serde(default = "default_max_tunnels")]
+    pub max_per_sandbox: usize,
+}
+
+impl Default for TunnelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_domain: None,
+            public_scheme: default_public_scheme(),
+            docker_network_prefix: default_tunnel_network_prefix(),
+            config_dir: default_tunnel_config_dir(),
+            edge_container: default_tunnel_edge_container(),
+            edge_entrypoint: default_tunnel_entrypoint(),
+            edge_tls: true,
+            edge_cert_resolver: default_tunnel_cert_resolver(),
+            max_per_sandbox: default_max_tunnels(),
+        }
+    }
+}
+
+impl TunnelConfig {
+    pub fn validate(&self) -> CoreResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let domain = self
+            .base_domain
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                CoreError::Validation(
+                    "tunnel.base_domain is required when tunnels are enabled".into(),
+                )
+            })?;
+        if domain.len() > 253
+            || domain.starts_with('.')
+            || domain.ends_with('.')
+            || domain.contains('*')
+            || domain.split('.').count() < 2
+        {
+            return Err(CoreError::Validation(
+                "tunnel.base_domain must be a lowercase DNS name without a wildcard or trailing dot"
+                    .into(),
+            ));
+        }
+        for label in domain.split('.') {
+            validate_dns_label(label)?;
+        }
+        if !matches!(self.public_scheme.as_str(), "http" | "https") {
+            return Err(CoreError::Validation(
+                "tunnel.public_scheme must be http or https".into(),
+            ));
+        }
+        validate_config_token("tunnel.docker_network_prefix", &self.docker_network_prefix)?;
+        validate_config_token("tunnel.edge_container", &self.edge_container)?;
+        validate_config_token("tunnel.edge_entrypoint", &self.edge_entrypoint)?;
+        if let Some(resolver) = &self.edge_cert_resolver {
+            validate_config_token("tunnel.edge_cert_resolver", resolver)?;
+        }
+        if !self.config_dir.starts_with('/') || self.config_dir.contains('\0') {
+            return Err(CoreError::Validation(
+                "tunnel.config_dir must be an absolute path".into(),
+            ));
+        }
+        if !(1..=32).contains(&self.max_per_sandbox) {
+            return Err(CoreError::Validation(
+                "tunnel.max_per_sandbox must be between 1 and 32".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn base_domain(&self) -> CoreResult<&str> {
+        self.base_domain
+            .as_deref()
+            .ok_or_else(|| CoreError::Validation("tunnel.base_domain is not configured".into()))
+    }
+}
+
+fn validate_config_token(name: &str, value: &str) -> CoreResult<()> {
+    let maximum = if name == "tunnel.docker_network_prefix" {
+        40
+    } else {
+        128
+    };
+    let valid = !value.is_empty()
+        && value.len() <= maximum
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(CoreError::Validation(format!(
+            "{name} must use only letters, digits, dots, underscores, and hyphens"
+        )))
+    }
+}
+
+fn default_public_scheme() -> String {
+    "https".into()
+}
+fn default_tunnel_network_prefix() -> String {
+    "sandbox-tunnel".into()
+}
+fn default_tunnel_config_dir() -> String {
+    "/var/lib/sandbox/tunnels".into()
+}
+fn default_tunnel_edge_container() -> String {
+    "sandbox-tunnel-edge".into()
+}
+fn default_tunnel_entrypoint() -> String {
+    "websecure".into()
+}
+fn default_tunnel_cert_resolver() -> Option<String> {
+    Some("letsencrypt".into())
+}
+const fn default_true() -> bool {
+    true
+}
+const fn default_max_tunnels() -> usize {
+    8
 }
 
 impl SandboxConfig {
@@ -256,4 +405,49 @@ const fn default_microvm_threshold() -> u16 {
 }
 const fn default_output_limit() -> usize {
     1_048_576
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TunnelConfig;
+
+    #[test]
+    fn disabled_tunnels_do_not_require_a_domain() {
+        assert!(TunnelConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn enabled_tunnels_require_a_safe_lowercase_domain() {
+        let valid = TunnelConfig {
+            enabled: true,
+            base_domain: Some("tunnel.example.com".into()),
+            ..TunnelConfig::default()
+        };
+        assert!(valid.validate().is_ok());
+
+        for domain in [
+            "*.example.com",
+            "Tunnel.example.com",
+            "example.com.",
+            "localhost",
+        ] {
+            let invalid = TunnelConfig {
+                enabled: true,
+                base_domain: Some(domain.into()),
+                ..TunnelConfig::default()
+            };
+            assert!(invalid.validate().is_err(), "{domain}");
+        }
+    }
+
+    #[test]
+    fn tunnel_network_prefix_leaves_room_for_a_uuid() {
+        let invalid = TunnelConfig {
+            enabled: true,
+            base_domain: Some("tunnel.example.com".into()),
+            docker_network_prefix: "x".repeat(41),
+            ..TunnelConfig::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
 }

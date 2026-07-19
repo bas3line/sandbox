@@ -3,7 +3,7 @@ use std::{path::PathBuf, process::Stdio, time::Duration};
 use async_trait::async_trait;
 use sandbox_core::{
     SandboxId,
-    model::{CommandOutput, CommandSpec, IsolationTier, SandboxSpec},
+    model::{CommandOutput, CommandSpec, IsolationTier, SandboxSpec, Tunnel},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
@@ -138,6 +138,16 @@ impl SandboxRuntime for ExternalRuntime {
             command.timeout_seconds.saturating_add(5),
         )
         .await
+    }
+
+    async fn expose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError> {
+        let _result: EmptyResult = self.call("expose", id, tunnel, 30).await?;
+        Ok(())
+    }
+
+    async fn unexpose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError> {
+        let _result: EmptyResult = self.call("unexpose", id, tunnel, 30).await?;
+        Ok(())
     }
 
     async fn delete(&self, id: SandboxId) -> Result<(), RuntimeError> {

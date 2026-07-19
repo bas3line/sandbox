@@ -27,6 +27,7 @@ sandbox create \
   --untrusted-repo \
   --generated-code \
   --needs-secrets \
+  --expose 3000 \
   --label team=platform
 ```
 
@@ -55,6 +56,18 @@ Arguments after `--` remain an argv vector. Use `--no-wait` only when the caller
 sandbox wait "$OPERATION_ID" --timeout 900
 sandbox delete "$SANDBOX_ID" --wait
 ```
+
+## Public tunnels
+
+Make the intended HTTP/WebSocket service listen on `0.0.0.0`, then:
+
+```sh
+sandbox tunnel create "$SANDBOX_ID" --port 3000
+sandbox tunnel list "$SANDBOX_ID"
+sandbox tunnel delete "$SANDBOX_ID" "$TUNNEL_ID"
+```
+
+Use `--subdomain review-42` only when the caller needs a stable human-readable label. Every returned URL is public. Do not expose admin interfaces or services containing credentials.
 
 ## Coding agents
 

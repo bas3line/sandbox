@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration as StdDuration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration as StdDuration};
 
 use axum::{
     Json, Router,
@@ -10,16 +10,19 @@ use axum::{
 use chrono::{Duration, Utc};
 use sandbox_aegis::{AegisScheduler, ScheduleError};
 use sandbox_core::{
-    AssignmentId, NodeId, OperationId, SandboxId,
+    AssignmentId, NodeId, OperationId, SandboxId, TunnelId,
     api::{
         ApiErrorBody, CompleteAssignmentRequest, CreateSandboxRequest, CreateSandboxResponse,
-        ExecSandboxRequest, HealthResponse, HeartbeatRequest, LeaseAssignmentsResponse, ListQuery,
-        ListSandboxesResponse, OperationResponse, RegisterNodeRequest, RegisterNodeResponse,
+        CreateTunnelRequest, ExecSandboxRequest, HealthResponse, HeartbeatRequest,
+        LeaseAssignmentsResponse, ListQuery, ListSandboxesResponse, OperationResponse,
+        RegisterNodeRequest, RegisterNodeResponse, TunnelAuthorizationQuery, TunnelCapabilities,
+        TunnelOperationResponse,
     },
     config::SandboxConfig,
     model::{
-        Assignment, AssignmentKind, AssignmentState, LifecycleEvent, Operation, OperationState,
-        Sandbox, SandboxState,
+        Assignment, AssignmentKind, AssignmentState, DataSensitivity, ExposureProtocol,
+        LifecycleEvent, Operation, OperationState, PortExposure, Sandbox, SandboxState, Tunnel,
+        TunnelState,
     },
 };
 use sandbox_events::BusRef;
@@ -65,6 +68,12 @@ pub async fn serve(
             get(get_sandbox).delete(delete_sandbox),
         )
         .route("/v1/sandboxes/{id}/exec", post(exec_sandbox))
+        .route("/v1/sandboxes/{id}/tunnels", post(create_tunnel))
+        .route(
+            "/v1/sandboxes/{id}/tunnels/{tunnel_id}",
+            axum::routing::delete(delete_tunnel),
+        )
+        .route("/v1/tunnels/authorize", get(authorize_tunnel_domain))
         .route("/v1/operations/{id}", get(get_operation))
         .route("/v1/nodes/register", post(register_node))
         .route("/v1/nodes/{id}/heartbeat", post(heartbeat_node))
@@ -95,6 +104,21 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         version: env!("CARGO_PKG_VERSION").into(),
         store: state.store.backend_name().into(),
         now: Utc::now(),
+        tunnels: TunnelCapabilities {
+            enabled: state.config.tunnel.enabled,
+            base_domain: state.config.tunnel.base_domain.clone(),
+            public_scheme: state
+                .config
+                .tunnel
+                .enabled
+                .then(|| state.config.tunnel.public_scheme.clone()),
+            protocols: state
+                .config
+                .tunnel
+                .enabled
+                .then_some(vec![ExposureProtocol::Http])
+                .unwrap_or_default(),
+        },
     })
 }
 
@@ -104,30 +128,34 @@ async fn create_sandbox(
     Json(request): Json<CreateSandboxRequest>,
 ) -> Result<(StatusCode, Json<CreateSandboxResponse>), ApiError> {
     require_operator(&state, &headers)?;
-    request.spec.validate().map_err(ApiError::bad_request)?;
-    if request.spec.ttl_seconds > state.config.policy.max_ttl_seconds {
+    let mut spec = request.spec;
+    spec.validate().map_err(ApiError::bad_request)?;
+    if spec.ttl_seconds > state.config.policy.max_ttl_seconds {
         return Err(ApiError::bad_request(format!(
             "ttl exceeds server maximum of {} seconds",
             state.config.policy.max_ttl_seconds
         )));
     }
+    let sandbox_id = SandboxId::new();
+    let tunnels =
+        materialize_tunnels(&state, sandbox_id, &spec.exposures, spec.sensitivity).await?;
+    spec.exposures = tunnels.iter().map(tunnel_exposure).collect();
     let nodes = state.store.list_nodes().await?;
     let now = Utc::now();
-    let decision = state.scheduler.schedule(&request.spec, &nodes, now)?;
-    let sandbox_id = SandboxId::new();
+    let decision = state.scheduler.schedule(&spec, &nodes, now)?;
     let operation_id = OperationId::new();
     let sandbox = Sandbox {
         id: sandbox_id,
-        spec: request.spec.clone(),
+        spec: spec.clone(),
         state: SandboxState::Scheduled,
         node_id: decision.node_id,
         isolation: decision.isolation,
         risk_score: decision.risk_score,
         created_at: now,
         updated_at: now,
-        expires_at: now
-            + Duration::seconds(i64::try_from(request.spec.ttl_seconds).unwrap_or(i64::MAX)),
+        expires_at: now + Duration::seconds(i64::try_from(spec.ttl_seconds).unwrap_or(i64::MAX)),
         failure: None,
+        tunnels: tunnels.clone(),
     };
     let operation = new_operation(operation_id, sandbox_id, now);
     let assignment = Assignment {
@@ -136,8 +164,9 @@ async fn create_sandbox(
         sandbox_id,
         node_id: decision.node_id,
         kind: AssignmentKind::Create {
-            spec: request.spec,
+            spec,
             isolation: decision.isolation,
+            tunnels,
         },
         state: AssignmentState::Pending,
         attempt: 0,
@@ -153,6 +182,287 @@ async fn create_sandbox(
         StatusCode::CREATED,
         Json(CreateSandboxResponse { sandbox, operation }),
     ))
+}
+
+async fn create_tunnel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<SandboxId>,
+    Json(request): Json<CreateTunnelRequest>,
+) -> Result<(StatusCode, Json<TunnelOperationResponse>), ApiError> {
+    require_operator(&state, &headers)?;
+    let exposure = PortExposure {
+        container_port: request.container_port,
+        protocol: request.protocol,
+        subdomain: request.subdomain,
+        authenticated: request.authenticated,
+    };
+    exposure.validate().map_err(ApiError::bad_request)?;
+    let mut sandbox = state.store.get_sandbox(id).await?;
+    if sandbox.state != SandboxState::Running {
+        return Err(ApiError::conflict(format!(
+            "sandbox is {:?}, not running",
+            sandbox.state
+        )));
+    }
+    if sandbox.tunnels.len() >= state.config.tunnel.max_per_sandbox {
+        return Err(ApiError::conflict(format!(
+            "sandbox already has the configured maximum of {} tunnels",
+            state.config.tunnel.max_per_sandbox
+        )));
+    }
+    if sandbox
+        .tunnels
+        .iter()
+        .any(|tunnel| tunnel.container_port == exposure.container_port)
+    {
+        return Err(ApiError::conflict(format!(
+            "container port {} already has a tunnel",
+            exposure.container_port
+        )));
+    }
+    let node = state
+        .store
+        .list_nodes()
+        .await?
+        .into_iter()
+        .find(|node| node.id == sandbox.node_id)
+        .ok_or_else(|| ApiError::service_unavailable("sandbox worker is not registered"))?;
+    if !node.supports_http_tunnels {
+        return Err(ApiError::service_unavailable(
+            "the selected worker does not support HTTP tunnels",
+        ));
+    }
+    let tunnel = materialize_tunnels(
+        &state,
+        id,
+        std::slice::from_ref(&exposure),
+        sandbox.spec.sensitivity,
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| ApiError::internal("tunnel allocation returned no record"))?;
+    let original = sandbox.clone();
+    sandbox.tunnels.push(tunnel.clone());
+    sandbox.spec.exposures.push(tunnel_exposure(&tunnel));
+    sandbox.updated_at = Utc::now();
+    state.store.update_sandbox(sandbox.clone()).await?;
+    let operation = new_operation(OperationId::new(), id, sandbox.updated_at);
+    let assignment = Assignment {
+        id: AssignmentId::new(),
+        operation_id: operation.id,
+        sandbox_id: id,
+        node_id: sandbox.node_id,
+        kind: AssignmentKind::Expose {
+            tunnel: tunnel.clone(),
+        },
+        state: AssignmentState::Pending,
+        attempt: 0,
+        lease_until: None,
+        created_at: sandbox.updated_at,
+    };
+    if let Err(error) = state
+        .store
+        .create_assignment(assignment, operation.clone())
+        .await
+    {
+        let _rollback = state.store.update_sandbox(original).await;
+        return Err(error.into());
+    }
+    publish(&state, "sandbox.tunnel_pending", &sandbox).await;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(TunnelOperationResponse { tunnel, operation }),
+    ))
+}
+
+async fn delete_tunnel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, tunnel_id)): Path<(SandboxId, TunnelId)>,
+) -> Result<(StatusCode, Json<TunnelOperationResponse>), ApiError> {
+    require_operator(&state, &headers)?;
+    let mut sandbox = state.store.get_sandbox(id).await?;
+    if sandbox.state != SandboxState::Running {
+        return Err(ApiError::conflict(format!(
+            "sandbox is {:?}, not running",
+            sandbox.state
+        )));
+    }
+    let position = sandbox
+        .tunnels
+        .iter()
+        .position(|tunnel| tunnel.id == tunnel_id)
+        .ok_or_else(|| ApiError::not_found(format!("tunnel {tunnel_id}")))?;
+    if matches!(
+        sandbox.tunnels[position].state,
+        TunnelState::Pending | TunnelState::Removing
+    ) {
+        return Err(ApiError::conflict(format!(
+            "tunnel is {:?}; wait for its current operation",
+            sandbox.tunnels[position].state
+        )));
+    }
+    let original = sandbox.clone();
+    sandbox.tunnels[position].state = TunnelState::Removing;
+    sandbox.tunnels[position].failure = None;
+    sandbox.updated_at = Utc::now();
+    let tunnel = sandbox.tunnels[position].clone();
+    state.store.update_sandbox(sandbox.clone()).await?;
+    let operation = new_operation(OperationId::new(), id, sandbox.updated_at);
+    let assignment = Assignment {
+        id: AssignmentId::new(),
+        operation_id: operation.id,
+        sandbox_id: id,
+        node_id: sandbox.node_id,
+        kind: AssignmentKind::Unexpose {
+            tunnel: tunnel.clone(),
+        },
+        state: AssignmentState::Pending,
+        attempt: 0,
+        lease_until: None,
+        created_at: sandbox.updated_at,
+    };
+    if let Err(error) = state
+        .store
+        .create_assignment(assignment, operation.clone())
+        .await
+    {
+        let _rollback = state.store.update_sandbox(original).await;
+        return Err(error.into());
+    }
+    publish(&state, "sandbox.tunnel_removing", &sandbox).await;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(TunnelOperationResponse { tunnel, operation }),
+    ))
+}
+
+async fn authorize_tunnel_domain(
+    State(state): State<AppState>,
+    Query(query): Query<TunnelAuthorizationQuery>,
+) -> StatusCode {
+    if !state.config.tunnel.enabled || query.domain.len() > 253 {
+        return StatusCode::NOT_FOUND;
+    }
+    let domain = query.domain.trim_end_matches('.').to_ascii_lowercase();
+    let suffix = match state.config.tunnel.base_domain() {
+        Ok(base) => format!(".{base}"),
+        Err(_) => return StatusCode::NOT_FOUND,
+    };
+    if !domain.ends_with(&suffix) || domain.len() <= suffix.len() {
+        return StatusCode::NOT_FOUND;
+    }
+    match state.store.find_tunnel_by_hostname(&domain).await {
+        Ok(Some(_)) => StatusCode::NO_CONTENT,
+        Ok(None) | Err(_) => StatusCode::NOT_FOUND,
+    }
+}
+
+async fn materialize_tunnels(
+    state: &AppState,
+    sandbox_id: SandboxId,
+    exposures: &[PortExposure],
+    sensitivity: DataSensitivity,
+) -> Result<Vec<Tunnel>, ApiError> {
+    if exposures.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !state.config.tunnel.enabled {
+        return Err(ApiError::service_unavailable(
+            "public tunnels are disabled on this deployment",
+        ));
+    }
+    state
+        .config
+        .tunnel
+        .validate()
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    if exposures.len() > state.config.tunnel.max_per_sandbox {
+        return Err(ApiError::bad_request(format!(
+            "at most {} tunnels are allowed per sandbox",
+            state.config.tunnel.max_per_sandbox
+        )));
+    }
+    if matches!(
+        sensitivity,
+        DataSensitivity::Confidential | DataSensitivity::Restricted
+    ) {
+        return Err(ApiError::bad_request(
+            "public tunnels are not allowed for confidential or restricted sandboxes",
+        ));
+    }
+    let base_domain = state
+        .config
+        .tunnel
+        .base_domain()
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let existing_hosts = state
+        .store
+        .list_sandboxes(None)
+        .await?
+        .into_iter()
+        .flat_map(|sandbox| sandbox.tunnels)
+        .map(|tunnel| tunnel.hostname)
+        .collect::<BTreeSet<_>>();
+    let mut allocated_hosts = BTreeSet::new();
+    let mut allocated_ports = BTreeSet::new();
+    let mut tunnels = Vec::with_capacity(exposures.len());
+    for exposure in exposures {
+        exposure.validate().map_err(ApiError::bad_request)?;
+        if exposure.protocol != ExposureProtocol::Http {
+            return Err(ApiError::bad_request(
+                "public URLs currently support HTTP and WebSocket services only",
+            ));
+        }
+        if exposure.authenticated {
+            return Err(ApiError::bad_request(
+                "built-in tunnel authentication is not implemented; put an identity-aware proxy in front of the edge",
+            ));
+        }
+        if !allocated_ports.insert(exposure.container_port) {
+            return Err(ApiError::bad_request(format!(
+                "container port {} was requested more than once",
+                exposure.container_port
+            )));
+        }
+        let subdomain = exposure.subdomain.clone().unwrap_or_else(|| {
+            format!(
+                "s-{}-p{}",
+                sandbox_id.to_string().replace('-', ""),
+                exposure.container_port
+            )
+        });
+        sandbox_core::model::validate_dns_label(&subdomain).map_err(ApiError::bad_request)?;
+        let hostname = format!("{subdomain}.{base_domain}");
+        if existing_hosts.contains(&hostname) || !allocated_hosts.insert(hostname.clone()) {
+            return Err(ApiError::conflict(format!(
+                "tunnel hostname {hostname} is already allocated"
+            )));
+        }
+        tunnels.push(Tunnel {
+            id: TunnelId::new(),
+            container_port: exposure.container_port,
+            protocol: exposure.protocol,
+            subdomain,
+            public_url: format!("{}://{hostname}", state.config.tunnel.public_scheme),
+            hostname,
+            authenticated: false,
+            state: TunnelState::Pending,
+            failure: None,
+        });
+    }
+    Ok(tunnels)
+}
+
+fn tunnel_exposure(tunnel: &Tunnel) -> PortExposure {
+    PortExposure {
+        container_port: tunnel.container_port,
+        protocol: tunnel.protocol,
+        subdomain: Some(tunnel.subdomain.clone()),
+        authenticated: tunnel.authenticated,
+    }
 }
 
 async fn list_sandboxes(
@@ -234,6 +544,10 @@ async fn delete_sandbox(
 async fn enqueue_delete(state: &AppState, mut sandbox: Sandbox) -> Result<Operation, ApiError> {
     let now = Utc::now();
     sandbox.state = SandboxState::Stopping;
+    for tunnel in &mut sandbox.tunnels {
+        tunnel.state = TunnelState::Removing;
+        tunnel.failure = None;
+    }
     sandbox.updated_at = now;
     state.store.update_sandbox(sandbox.clone()).await?;
     let operation = new_operation(OperationId::new(), sandbox.id, now);
@@ -488,6 +802,20 @@ impl ApiError {
         Self {
             status: StatusCode::CONFLICT,
             code: "conflict",
+            message: message.into(),
+        }
+    }
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: "not_found",
+            message: message.into(),
+        }
+    }
+    fn service_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "unavailable",
             message: message.into(),
         }
     }

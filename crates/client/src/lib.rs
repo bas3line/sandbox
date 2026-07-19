@@ -2,11 +2,12 @@
 
 use reqwest::{Method, StatusCode};
 use sandbox_core::{
-    NodeId, OperationId, SandboxId,
+    NodeId, OperationId, SandboxId, TunnelId,
     api::{
         ApiErrorBody, CompleteAssignmentRequest, CreateSandboxRequest, CreateSandboxResponse,
-        ExecSandboxRequest, HealthResponse, HeartbeatRequest, LeaseAssignmentsResponse,
-        ListSandboxesResponse, OperationResponse, RegisterNodeRequest, RegisterNodeResponse,
+        CreateTunnelRequest, ExecSandboxRequest, HealthResponse, HeartbeatRequest,
+        LeaseAssignmentsResponse, ListSandboxesResponse, OperationResponse, RegisterNodeRequest,
+        RegisterNodeResponse, TunnelOperationResponse,
     },
     model::{NodeRecord, Operation, Sandbox, SandboxSpec},
 };
@@ -103,6 +104,32 @@ impl SandboxClient {
             )
             .await?;
         Ok(response.operation)
+    }
+
+    pub async fn create_tunnel(
+        &self,
+        id: SandboxId,
+        request: CreateTunnelRequest,
+    ) -> Result<TunnelOperationResponse, ClientError> {
+        self.request(
+            Method::POST,
+            &format!("v1/sandboxes/{id}/tunnels"),
+            Some(&request),
+        )
+        .await
+    }
+
+    pub async fn delete_tunnel(
+        &self,
+        id: SandboxId,
+        tunnel_id: TunnelId,
+    ) -> Result<TunnelOperationResponse, ClientError> {
+        self.request::<(), _>(
+            Method::DELETE,
+            &format!("v1/sandboxes/{id}/tunnels/{tunnel_id}"),
+            None,
+        )
+        .await
     }
 
     pub async fn delete(&self, id: SandboxId) -> Result<Operation, ClientError> {

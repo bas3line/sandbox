@@ -23,6 +23,14 @@ A worker failed to report completion before lease expiry. Create/delete drivers 
 
 The shipped `sandbox-egress` network is intentionally internal. Add the destination to the controlled proxy/mirror path. Do not switch the tenant to open egress without policy approval.
 
+### Tunnel operation fails
+
+Check that the worker advertises tunnel support, the configured edge container is running, the shared route directory is mounted at both paths, and wildcard DNS points at the public edge. The sandbox service must bind `0.0.0.0`. For TLS failures, inspect edge ACME logs and verify the active hostname returns `204` from `/v1/tunnels/authorize?domain=...`; unknown or inactive names must return `404`.
+
+For Cloudflare Tunnel deployments, DNS should resolve to Cloudflare rather than the origin. Check `cloudflared` connector health and verify the published wildcard route targets `http://tunnel-edge:8080`. A nested wildcard needs an Advanced edge certificate; Cloudflare Universal SSL does not cover it, and Total TLS does not issue certificates for Tunnel hostnames. Confirm the public path works before closing ingress, then verify the origin ports are unreachable from outside the management network.
+
+For the fixed proxied HTTP compatibility mode, confirm the public URL remains `http://`, Caddy does not redirect the wildcard, and Cloudflare does not enforce an edge HTTPS redirect. Never use this mode for secrets or sensitive traffic. After tunnel deletion, allow bounded file-provider propagation: a transient `502` must settle to `404`, with the per-sandbox network and route file removed.
+
 ### Worker compromised
 
 1. Drain or network-isolate the host.
@@ -41,4 +49,4 @@ Back up PostgreSQL with tested point-in-time recovery. The control database rest
 
 ## Capacity
 
-Advertise allocatable resources after host, runtime, image cache, and emergency reserves. Track peak concurrent sandboxes, dominant requested resources, image pull latency, create latency, exec duration, output truncation, lease retries, and risk-tier demand. Add microVM workers before lowering isolation policy.
+Advertise allocatable resources after host, runtime, image cache, and emergency reserves. Track peak concurrent sandboxes and tunnels, dominant requested resources, image pull latency, create latency, exec duration, output truncation, lease retries, edge certificate/routing failures, and risk-tier demand. Add microVM workers before lowering isolation policy.

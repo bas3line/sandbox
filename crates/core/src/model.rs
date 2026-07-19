@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{AssignmentId, CoreError, CoreResult, NodeId, OperationId, SandboxId};
+use crate::{AssignmentId, CoreError, CoreResult, NodeId, OperationId, SandboxId, TunnelId};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,12 +96,49 @@ pub struct PortExposure {
     pub authenticated: bool,
 }
 
+impl PortExposure {
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.container_port == 0 {
+            return Err(CoreError::Validation(
+                "exposure container_port must be between 1 and 65535".into(),
+            ));
+        }
+        if let Some(subdomain) = &self.subdomain {
+            validate_dns_label(subdomain)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureProtocol {
     #[default]
     Http,
     Tcp,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelState {
+    Pending,
+    Active,
+    Removing,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Tunnel {
+    pub id: TunnelId,
+    pub container_port: u16,
+    pub protocol: ExposureProtocol,
+    pub subdomain: String,
+    pub hostname: String,
+    pub public_url: String,
+    #[serde(default)]
+    pub authenticated: bool,
+    pub state: TunnelState,
+    pub failure: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -183,8 +220,34 @@ impl SandboxSpec {
                 )));
             }
         }
+        if self.exposures.len() > 32 {
+            return Err(CoreError::Validation(
+                "a sandbox cannot request more than 32 exposures".into(),
+            ));
+        }
+        for exposure in &self.exposures {
+            exposure.validate()?;
+        }
         Ok(())
     }
+}
+
+pub fn validate_dns_label(value: &str) -> CoreResult<()> {
+    let bytes = value.as_bytes();
+    let valid = !bytes.is_empty()
+        && bytes.len() <= 63
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-');
+    if !valid {
+        return Err(CoreError::Validation(
+            "subdomain must be a lowercase DNS label using letters, digits, and interior hyphens"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -210,6 +273,8 @@ pub struct Sandbox {
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub failure: Option<String>,
+    #[serde(default)]
+    pub tunnels: Vec<Tunnel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -239,6 +304,8 @@ pub struct NodeRecord {
     pub pressure: f32,
     #[serde(default)]
     pub draining: bool,
+    #[serde(default)]
+    pub supports_http_tunnels: bool,
     pub last_seen: DateTime<Utc>,
 }
 
@@ -288,9 +355,17 @@ pub enum AssignmentKind {
     Create {
         spec: SandboxSpec,
         isolation: IsolationTier,
+        #[serde(default)]
+        tunnels: Vec<Tunnel>,
     },
     Exec {
         command: CommandSpec,
+    },
+    Expose {
+        tunnel: Tunnel,
+    },
+    Unexpose {
+        tunnel: Tunnel,
     },
     Delete,
 }
@@ -354,4 +429,38 @@ pub struct LifecycleEvent {
     pub node_id: Option<NodeId>,
     pub timestamp: DateTime<Utc>,
     pub attributes: BTreeMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExposureProtocol, PortExposure, validate_dns_label};
+
+    #[test]
+    fn tunnel_subdomains_are_strict_lowercase_dns_labels() {
+        for valid in ["demo", "review-42", "a"] {
+            assert!(validate_dns_label(valid).is_ok(), "{valid}");
+        }
+        for invalid in ["", "Demo", "-demo", "demo-", "demo.example", "demo_test"] {
+            assert!(validate_dns_label(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn port_exposure_rejects_zero_and_invalid_subdomain() {
+        let exposure = PortExposure {
+            container_port: 0,
+            protocol: ExposureProtocol::Http,
+            subdomain: None,
+            authenticated: false,
+        };
+        assert!(exposure.validate().is_err());
+
+        let exposure = PortExposure {
+            container_port: 3_000,
+            protocol: ExposureProtocol::Http,
+            subdomain: Some("bad.name".into()),
+            authenticated: false,
+        };
+        assert!(exposure.validate().is_err());
+    }
 }
