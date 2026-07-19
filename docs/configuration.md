@@ -80,4 +80,4 @@ SANDBOX__TUNNEL__BASE_DOMAIN=tunnel.example.com
 SANDBOX__TUNNEL__PUBLIC_SCHEME=https
 ```
 
-See [tunnels.md](tunnels.md) for every key, wildcard DNS, direct Traefik, Caddy on-demand TLS, lifecycle behavior, and troubleshooting.
+See [tunnels.md](tunnels.md) for every key, wildcard DNS, direct Traefik, Caddy on-demand TLS, outbound Cloudflare Tunnel ingress, lifecycle behavior, and troubleshooting. `SANDBOX_BIND_ADDRESS=127.0.0.1` limits the optional Compose host port when a private connector is the only ingress path.

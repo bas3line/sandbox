@@ -11,3 +11,4 @@
 /dist/
 /coverage/
 /deploy/compose/data/
+/deploy/compose/secrets/

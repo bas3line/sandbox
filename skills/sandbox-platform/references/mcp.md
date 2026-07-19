@@ -23,6 +23,8 @@ Cursor, Claude Desktop, Windsurf, Cline, Roo Code, and Gemini Code Assist use th
 
 Pi, Aider, CommandCode, and hosts without native MCP use the `sandbox` CLI with this skill. `sandbox-mcp` is a local stdio bridge. It connects to the public controller API and does not need worker, database, Docker, or NATS access. Never place `SANDBOX_TOKEN` in a committed client config.
 
+Cloudflare connector credentials stay with the deployment operator. Never request or pass a Cloudflare tunnel token through MCP, agent configuration, sandbox environment variables, or task arguments. An origin-hidden deployment does not change the client tool contract.
+
 ## Tools
 
 | Tool | Use |

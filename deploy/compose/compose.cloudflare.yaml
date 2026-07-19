@@ -1,0 +1,58 @@
+name: sandbox
+
+# Outbound-only Cloudflare ingress. Configure the remotely managed tunnel with:
+#   SANDBOX_DOMAIN                  -> http://controller:8080
+#   *.SANDBOX_TUNNEL_DOMAIN         -> http://tunnel-edge:8080
+#
+# Keep SANDBOX_BIND_ADDRESS=127.0.0.1, SANDBOX_TUNNEL_ENTRYPOINT=web, and
+# SANDBOX_TUNNEL_EDGE_TLS=false. Cloudflare terminates visitor TLS; cloudflared
+# carries traffic over its outbound connector to this private HTTP edge.
+
+services:
+  tunnel-edge:
+    image: traefik:v3.7.8
+    container_name: sandbox-tunnel-edge
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:8080
+      - --api.dashboard=false
+      - --ping=true
+    profiles: ["cloudflare-edge"]
+    volumes:
+      - tunnel-routes:/etc/traefik/dynamic:ro
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.2
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --metrics
+      - 0.0.0.0:2000
+      - run
+      - --token-file
+      - /run/secrets/cloudflare_tunnel_token
+    profiles: ["cloudflare-edge"]
+    secrets:
+      - cloudflare_tunnel_token
+    depends_on:
+      controller:
+        condition: service_healthy
+      tunnel-edge:
+        condition: service_started
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ${CLOUDFLARE_TUNNEL_TOKEN_FILE:-./secrets/cloudflare-tunnel.token}

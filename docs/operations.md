@@ -27,6 +27,8 @@ The shipped `sandbox-egress` network is intentionally internal. Add the destinat
 
 Check that the worker advertises tunnel support, the configured edge container is running, the shared route directory is mounted at both paths, and wildcard DNS points at the public edge. The sandbox service must bind `0.0.0.0`. For TLS failures, inspect edge ACME logs and verify the active hostname returns `204` from `/v1/tunnels/authorize?domain=...`; unknown or inactive names must return `404`.
 
+For Cloudflare Tunnel deployments, DNS should resolve to Cloudflare rather than the origin. Check `cloudflared` connector health and verify the published wildcard route targets `http://tunnel-edge:8080`. A nested wildcard needs an Advanced edge certificate; Cloudflare Universal SSL does not cover it, and Total TLS does not issue certificates for Tunnel hostnames. Confirm the public path works before closing ingress, then verify the origin ports are unreachable from outside the management network.
+
 ### Worker compromised
 
 1. Drain or network-isolate the host.

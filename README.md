@@ -136,7 +136,7 @@ cargo run --package sandbox-cli -- create --tenant dev --image ubuntu:24.04 --tt
 
 The Compose stack intentionally sets the microVM threshold above the score range so it can run on a normal Docker laptop. That is a developer convenience, not the production policy. Production keeps the default threshold of `55` and supplies compatible workers.
 
-To publish sandbox services, point a wildcard DNS record at the edge and enable the opt-in `edge` profile. The full Traefik and Caddy recipes are in [docs/tunnels.md](docs/tunnels.md); real deployment domains and addresses belong in the environment, never the repository.
+To publish sandbox services, configure wildcard DNS and enable an edge profile. Direct Traefik, Caddy, and an outbound-only Cloudflare Tunnel overlay are documented in [docs/tunnels.md](docs/tunnels.md). The Cloudflare option keeps the origin off public ingress; real deployment domains, connector tokens, addresses, and certificate material belong in the environment or secret store, never the repository.
 
 ## Coding agents
 

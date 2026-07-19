@@ -37,6 +37,8 @@ For production, place the controller behind an OIDC/mTLS gateway that maps ident
 
 Public tunnels are an independent ingress choice. The Docker worker creates one internal network per tunneled sandbox and attaches only that sandbox and the edge. Routes use exact hostnames and are removed with the tunnel or sandbox. URLs are unauthenticated and Internet-facing; confidential/restricted workloads, raw TCP, and requested tunnel authentication are rejected. Put an identity-aware proxy in front if your deployment needs user authentication.
 
+Orange-cloud DNS alone is not a complete origin boundary: a public origin can still be discovered or reached outside Cloudflare. The Cloudflare Tunnel overlay uses an outbound-only connector and an internal edge with no published ingress ports. After end-to-end verification, enforce the boundary with host and provider firewalls so the controller, port 80, and port 443 are not publicly reachable. Keep the connector token in a file-backed secret and rotate it if exposed.
+
 ## Host hardening checklist
 
 - Dedicated worker hosts with minimal packages and automatic security updates.

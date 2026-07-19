@@ -20,6 +20,8 @@ sandbox doctor
 
 `sandbox-mcp` never needs database, NATS, Docker, or worker credentials. It only needs the public controller URL and an API token.
 
+Cloudflare connector credentials are operator-only. Do not pass a Cloudflare tunnel token to MCP clients or coding agents. When the controller and wildcard routes use the outbound Cloudflare overlay, clients continue to use the same `SANDBOX_URL`, and tunnel tools return the same public HTTPS URLs.
+
 Skip all automatic MCP registration while keeping the binaries and skill:
 
 ```sh

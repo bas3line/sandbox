@@ -25,13 +25,29 @@ export SANDBOX_BUS_KIND=nats
 docker compose -f deploy/compose/compose.yaml --profile events up --build
 ```
 
+For an origin-hidden Cloudflare deployment, use the `cloudflare-edge` overlay. It runs an outbound-only connector and an internal HTTP tunnel edge without publishing ports 80 or 443:
+
+```sh
+export SANDBOX_BIND_ADDRESS=127.0.0.1
+export SANDBOX_TUNNEL_ENABLED=true
+export SANDBOX_TUNNEL_ENTRYPOINT=web
+export SANDBOX_TUNNEL_EDGE_TLS=false
+
+docker compose \
+  -f deploy/compose/compose.yaml \
+  -f deploy/compose/compose.cloudflare.yaml \
+  --profile cloudflare-edge up --build -d
+```
+
+The connector token is a file-backed Compose secret. Cloudflare route, certificate, token-file, and firewall setup are documented in [tunnels.md](tunnels.md#cloudflare-tunnel-with-a-hidden-origin).
+
 The worker mounts the Docker socket. This is a developer/single-tenant topology. It also raises the AEGIS microVM threshold to 101. Both choices are deliberately visible in the Compose file.
 
 ## Production topology
 
 Deploy these trust zones separately:
 
-1. Edge: TLS 1.3, OIDC/mTLS authentication, request limits, WAF, and only the controller API origin.
+1. Edge: TLS 1.3, OIDC/mTLS authentication, request limits, WAF, and only the controller API origin. Prefer an outbound connector or restrict origin ingress to the proxy network.
 2. Control: at least two `sandboxd --role controller` instances and PostgreSQL with backups/PITR.
 3. Worker pools: dedicated hosts grouped by isolation capability, region, sensitivity, and workload class.
 4. Egress: explicit artifact mirrors and authenticated HTTP/SOCKS proxies; no direct tenant route to management networks.
@@ -44,6 +60,8 @@ Do not expose workers publicly. Allow worker-to-controller API traffic, image/ar
 The `edge` Compose profile routes the controller API using `SANDBOX_DOMAIN` and reconciles exact-host HTTP/WebSocket tunnel routes below `SANDBOX_TUNNEL_DOMAIN`. Tunnel routing is disabled unless `SANDBOX_TUNNEL_ENABLED=true`.
 
 When an existing Caddy installation owns ports 80/443, use the Caddy Compose overlay and controller-backed on-demand TLS authorization. See [tunnels.md](tunnels.md) for DNS, TLS, configuration, isolation, and verification. Raw TCP forwarding is not implemented.
+
+When Cloudflare must hide the origin, use the Cloudflare Tunnel overlay instead of pointing a proxied `A` record at the host. A nested wildcard requires an Advanced Cloudflare edge certificate; Universal SSL covers only the apex and first-level subdomains in a full DNS setup.
 
 ## Systemd
 

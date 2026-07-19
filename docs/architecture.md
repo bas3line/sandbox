@@ -26,6 +26,8 @@ The MCP server is a newline-delimited JSON-RPC stdio process. It exposes the sam
 
 The optional HTTP/WebSocket edge consumes exact-host route files from Docker workers. Each tunneled sandbox gets its own internal Docker network shared only with the edge container. The controller persists desired tunnel state and authorizes active hostnames; workers own route and network reconciliation.
 
+Ingress is replaceable. The direct profile publishes Traefik, Caddy can terminate on-demand TLS, and the Cloudflare profile keeps the edge internal while an outbound-only `cloudflared` connector carries proxied traffic from Cloudflare. Connector choice does not change persisted tunnel state or the CLI/MCP contract.
+
 ## State transitions
 
 ```mermaid

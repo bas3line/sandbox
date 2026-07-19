@@ -31,6 +31,8 @@ Keep destructive production operations outside a general coding sandbox. Route t
 
 Every tunnel URL is Internet-facing even when its subdomain is difficult to guess. Expose only an intended HTTP/WebSocket service, make it listen on `0.0.0.0`, and remove the tunnel as soon as it is no longer needed. Never publish databases, Docker APIs, debug consoles, credential-bearing admin interfaces, or services processing confidential/restricted data. Tunnel authentication is rejected until the deployment has a real identity-aware proxy; a URL is not an access-control mechanism.
 
+When an operator requires a hidden origin, prefer an outbound connector such as the documented Cloudflare Tunnel overlay and close public origin ingress only after end-to-end verification. Orange-cloud DNS by itself does not prevent direct-origin bypass. A nested Cloudflare wildcard needs an edge certificate that explicitly covers that wildcard depth.
+
 ## Cleanup
 
 Request deletion and wait for completion. TTL is a backstop, not a substitute for cleanup. When deletion times out, inspect the original operation before issuing another delete.
