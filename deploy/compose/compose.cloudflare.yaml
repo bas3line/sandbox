@@ -4,7 +4,7 @@ name: sandbox
 #   SANDBOX_DOMAIN                  -> http://controller:8080
 #   *.SANDBOX_TUNNEL_DOMAIN         -> http://tunnel-edge:8080
 #
-# Keep SANDBOX_BIND_ADDRESS=127.0.0.1, SANDBOX_TUNNEL_ENTRYPOINT=web, and
+# Keep SANDBOX_PORT=127.0.0.1:8080, SANDBOX_TUNNEL_ENTRYPOINT=web, and
 # SANDBOX_TUNNEL_EDGE_TLS=false. Cloudflare terminates visitor TLS; cloudflared
 # carries traffic over its outbound connector to this private HTTP edge.
 

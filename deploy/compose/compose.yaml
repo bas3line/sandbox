@@ -40,7 +40,7 @@ services:
       SANDBOX__TUNNEL__MAX_PER_SANDBOX: ${SANDBOX_TUNNEL_MAX_PER_SANDBOX:-8}
       RUST_LOG: ${RUST_LOG:-sandboxd=info,tower_http=info}
     ports:
-      - "${SANDBOX_BIND_ADDRESS:-0.0.0.0}:${SANDBOX_PORT:-8080}:8080"
+      - "${SANDBOX_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy

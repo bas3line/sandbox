@@ -74,7 +74,7 @@ flowchart LR
    export SANDBOX_API_TOKEN="$(openssl rand -hex 32)"
    export SANDBOX_NODE_TOKEN="$(openssl rand -hex 32)"
    export SANDBOX_DOMAIN=sandbox.example.com
-   export SANDBOX_BIND_ADDRESS=127.0.0.1
+   export SANDBOX_PORT=127.0.0.1:8080
    export SANDBOX_TUNNEL_ENABLED=true
    export SANDBOX_TUNNEL_DOMAIN=tunnel.example.com
    export SANDBOX_TUNNEL_ENTRYPOINT=web
@@ -88,7 +88,7 @@ flowchart LR
 
 6. After both public routes pass end-to-end tests, close inbound HTTP, HTTPS, and controller ports at the host and provider firewall. Preserve the management path you actually use. The connector needs outbound TCP or UDP 7844 and HTTPS fallback access.
 
-The overlay pins `cloudflare/cloudflared:2026.7.2`, reads its token with `--token-file`, drops Linux capabilities, uses a read-only filesystem, and publishes no ports. The controller's optional host port binds to loopback through `SANDBOX_BIND_ADDRESS`.
+The overlay pins `cloudflare/cloudflared:2026.7.2`, reads its token with `--token-file`, drops Linux capabilities, uses a read-only filesystem, and publishes no ports. The controller's optional host port binds to loopback when `SANDBOX_PORT` contains a host address, such as `127.0.0.1:8080`.
 
 Cloudflare proxying is not tunnel authentication. Tunnel URLs remain public unless the operator adds an identity-aware Cloudflare Access policy or another supported authentication layer.
 

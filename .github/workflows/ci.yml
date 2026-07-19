@@ -26,7 +26,7 @@ jobs:
         env:
           SANDBOX_API_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           SANDBOX_NODE_TOKEN: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-          SANDBOX_BIND_ADDRESS: 127.0.0.1
+          SANDBOX_PORT: 127.0.0.1:8080
           SANDBOX_TUNNEL_ENABLED: "true"
           SANDBOX_TUNNEL_ENTRYPOINT: web
           SANDBOX_TUNNEL_EDGE_TLS: "false"

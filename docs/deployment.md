@@ -28,7 +28,7 @@ docker compose -f deploy/compose/compose.yaml --profile events up --build
 For an origin-hidden Cloudflare deployment, use the `cloudflare-edge` overlay. It runs an outbound-only connector and an internal HTTP tunnel edge without publishing ports 80 or 443:
 
 ```sh
-export SANDBOX_BIND_ADDRESS=127.0.0.1
+export SANDBOX_PORT=127.0.0.1:8080
 export SANDBOX_TUNNEL_ENABLED=true
 export SANDBOX_TUNNEL_ENTRYPOINT=web
 export SANDBOX_TUNNEL_EDGE_TLS=false
