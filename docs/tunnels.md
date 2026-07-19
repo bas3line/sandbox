@@ -34,6 +34,28 @@ For a full-setup Cloudflare zone, a hostname below `*.tunnel.example.com` is dee
 
 An orange-cloud `A` record hides the origin from ordinary DNS answers but still leaves a public origin path. For an origin that is not publicly reachable, use the outbound-only Cloudflare Tunnel overlay below and replace the origin-address record with the tunnel-managed `CNAME`.
 
+## Fixed proxied wildcard without an edge certificate
+
+If an operator will not change an existing proxied multi-level wildcard and has not purchased an Advanced edge certificate, Sandbox can publish **HTTP-only** URLs through that record. This is a compatibility mode, not the default and not equivalent to HTTPS.
+
+```sh
+export SANDBOX_TUNNEL_ENABLED=true
+export SANDBOX_TUNNEL_DOMAIN=tunnel.example.com
+export SANDBOX_TUNNEL_SCHEME=http
+export SANDBOX_TUNNEL_ENTRYPOINT=web
+export SANDBOX_TUNNEL_EDGE_TLS=false
+
+docker compose \
+  -f deploy/compose/compose.yaml \
+  -f deploy/compose/compose.caddy.yaml \
+  -f deploy/compose/compose.cloudflare-http.yaml \
+  --profile caddy-edge up --build -d
+```
+
+The final overlay replaces only Caddy's configuration mount. Its explicit `http://*.{$SANDBOX_TUNNEL_DOMAIN}` site prevents Caddy from redirecting wildcard requests to an unusable HTTPS name. The controller site keeps its normal configuration.
+
+This mode requires Cloudflare to allow HTTP for the record and not force an edge HTTPS redirect. Traffic is not encrypted on the visitor-to-Cloudflare or Cloudflare-to-origin legs. Do not expose credentials, private repositories, authenticated sessions, or sensitive application data through it. Upgrade to an Advanced edge certificate or the origin-hidden Cloudflare Tunnel topology for secure public use.
+
 ## Cloudflare Tunnel with a hidden origin
 
 This is the recommended Cloudflare topology. `cloudflared` initiates outbound connections to Cloudflare; neither the controller nor the tunnel edge needs a public listener.
@@ -175,5 +197,6 @@ Both controller and workers need the same public domain and scheme. Docker worke
 - Removing the final route disconnects the edge and sandbox and deletes their private network.
 - Sandbox delete and TTL reaping remove routes and the private network before removing the container.
 - A failed asynchronous tunnel operation is visible on both the operation and tunnel record; inspect it before retrying.
+- Edge route removal is asynchronous at the proxy. A request immediately after deletion may briefly receive `502`; retry for a bounded interval and require the route to settle at `404`.
 
 If certificate issuance fails, inspect edge logs, verify wildcard DNS and its proxy mode, and confirm the controller's authorization endpoint returns `204` for the active hostname from inside the edge network. For Cloudflare Tunnel, also confirm the connector is healthy, both published application routes target the internal Compose service names, and the Cloudflare edge certificate covers the exact wildcard depth.

@@ -81,3 +81,5 @@ SANDBOX__TUNNEL__PUBLIC_SCHEME=https
 ```
 
 See [tunnels.md](tunnels.md) for every key, wildcard DNS, direct Traefik, Caddy on-demand TLS, outbound Cloudflare Tunnel ingress, lifecycle behavior, and troubleshooting. `SANDBOX_PORT=127.0.0.1:8080` limits the optional Compose host port to loopback when a private connector is the only ingress path.
+
+Keep `tunnel.public_scheme = "https"` for normal deployments. Set it to `http` only for the documented fixed-proxied-wildcard compatibility mode, and pair it with an HTTP edge entrypoint and disabled edge TLS so returned URLs match reality.

@@ -1,0 +1,10 @@
+name: sandbox
+
+# Merge after compose.caddy.yaml. This keeps the controller site unchanged but
+# makes wildcard tunnel routes HTTP-only so a proxied multi-level Cloudflare
+# wildcard can work without an Advanced edge certificate.
+
+services:
+  caddy:
+    volumes:
+      - ../caddy/Caddyfile.cloudflare-http.example:/etc/caddy/Caddyfile:ro

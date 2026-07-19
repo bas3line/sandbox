@@ -29,6 +29,8 @@ Check that the worker advertises tunnel support, the configured edge container i
 
 For Cloudflare Tunnel deployments, DNS should resolve to Cloudflare rather than the origin. Check `cloudflared` connector health and verify the published wildcard route targets `http://tunnel-edge:8080`. A nested wildcard needs an Advanced edge certificate; Cloudflare Universal SSL does not cover it, and Total TLS does not issue certificates for Tunnel hostnames. Confirm the public path works before closing ingress, then verify the origin ports are unreachable from outside the management network.
 
+For the fixed proxied HTTP compatibility mode, confirm the public URL remains `http://`, Caddy does not redirect the wildcard, and Cloudflare does not enforce an edge HTTPS redirect. Never use this mode for secrets or sensitive traffic. After tunnel deletion, allow bounded file-provider propagation: a transient `502` must settle to `404`, with the per-sandbox network and route file removed.
+
 ### Worker compromised
 
 1. Drain or network-isolate the host.

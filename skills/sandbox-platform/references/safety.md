@@ -33,6 +33,8 @@ Every tunnel URL is Internet-facing even when its subdomain is difficult to gues
 
 When an operator requires a hidden origin, prefer an outbound connector such as the documented Cloudflare Tunnel overlay and close public origin ingress only after end-to-end verification. Orange-cloud DNS by itself does not prevent direct-origin bypass. A nested Cloudflare wildcard needs an edge certificate that explicitly covers that wildcard depth.
 
+Treat any `http://` tunnel URL as transport-insecure even when its DNS record is proxied. Do not send credentials, private code, authenticated cookies, or sensitive data through the fixed-wildcard HTTP compatibility mode.
+
 ## Cleanup
 
 Request deletion and wait for completion. TTL is a backstop, not a substitute for cleanup. When deletion times out, inspect the original operation before issuing another delete.

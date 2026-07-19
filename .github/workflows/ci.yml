@@ -34,6 +34,7 @@ jobs:
         run: |
           docker compose -f deploy/compose/compose.yaml --profile edge config >/dev/null
           docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.caddy.yaml --profile caddy-edge config >/dev/null
+          docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.caddy.yaml -f deploy/compose/compose.cloudflare-http.yaml --profile caddy-edge config >/dev/null
           docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.cloudflare.yaml --profile cloudflare-edge config >/dev/null
 
   supply-chain:

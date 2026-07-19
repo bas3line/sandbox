@@ -41,6 +41,8 @@ docker compose \
 
 The connector token is a file-backed Compose secret. Cloudflare route, certificate, token-file, and firewall setup are documented in [tunnels.md](tunnels.md#cloudflare-tunnel-with-a-hidden-origin).
 
+If an existing proxied nested wildcard cannot be changed and has no Advanced edge certificate, the reviewed `compose.cloudflare-http.yaml` overlay provides an explicit HTTP-only compatibility mode. It requires `SANDBOX_TUNNEL_SCHEME=http` and must not carry secrets or sensitive application traffic. See [tunnels.md](tunnels.md#fixed-proxied-wildcard-without-an-edge-certificate).
+
 The worker mounts the Docker socket. This is a developer/single-tenant topology. It also raises the AEGIS microVM threshold to 101. Both choices are deliberately visible in the Compose file.
 
 ## Production topology

@@ -39,6 +39,8 @@ Public tunnels are an independent ingress choice. The Docker worker creates one 
 
 Orange-cloud DNS alone is not a complete origin boundary: a public origin can still be discovered or reached outside Cloudflare. The Cloudflare Tunnel overlay uses an outbound-only connector and an internal edge with no published ingress ports. After end-to-end verification, enforce the boundary with host and provider firewalls so the controller, port 80, and port 443 are not publicly reachable. Keep the connector token in a file-backed secret and rotate it if exposed.
 
+The fixed proxied wildcard compatibility profile returns HTTP URLs and provides no transport confidentiality. It exists only for operators who cannot change a proxied multi-level record or provision its edge certificate. Never use it for credentials, private source, authenticated sessions, or confidential/restricted workloads. A proxied DNS answer hides the origin address from ordinary lookup but does not prove that the origin cannot be discovered or bypassed.
+
 ## Host hardening checklist
 
 - Dedicated worker hosts with minimal packages and automatic security updates.
