@@ -7,6 +7,11 @@
 	reverse_proxy controller:8080
 }
 
+https://relay.{$SANDBOX_TUNNEL_DOMAIN} {
+	tls /run/secrets/cloudflare_origin_cert /run/secrets/cloudflare_origin_key
+	reverse_proxy controller:8080
+}
+
 # Cloudflare terminates visitor TLS with the edge certificate. Caddy presents
 # the matching Origin CA certificate so the Cloudflare-to-origin leg can stay
 # on Full (strict) instead of being downgraded to Flexible.

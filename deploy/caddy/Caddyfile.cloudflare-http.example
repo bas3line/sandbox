@@ -7,6 +7,10 @@
 	reverse_proxy controller:8080
 }
 
+http://relay.{$SANDBOX_TUNNEL_DOMAIN} {
+	reverse_proxy controller:8080
+}
+
 # Compatibility mode for a fixed, proxied, multi-level Cloudflare wildcard
 # that does not have an Advanced edge certificate. Visitor traffic is HTTP.
 http://*.{$SANDBOX_TUNNEL_DOMAIN} {

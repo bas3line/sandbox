@@ -68,7 +68,7 @@ sandbox agent run codex --tenant platform
 sandbox delete 019f... --wait
 ```
 
-`sandbox http PORT` shares a service running on your current machine and prints a temporary HTTPS URL; it does not require `sandboxd` or `SANDBOX_URL`. It prefers an installed `cloudflared` and otherwise uses the system SSH client with localhost.run. Keep the command running and press Ctrl-C to revoke the URL. Remote services inside a managed sandbox continue to use `sandbox tunnel create SANDBOX_ID --port PORT`.
+`sandbox http PORT` shares a service running on your current machine at a temporary `https://local-….tunnel.yshubham.com` URL through the hosted Sandbox relay. No third-party quick-tunnel domain or helper binary is involved. HTTP and WebSocket traffic—including Vite HMR—is carried over one outbound WebSocket and rewritten to the loopback origin, so development servers never need to allow a random public `Host`. Keep the command running and press Ctrl-C to revoke the exact-host route. Self-hosters can set `SANDBOX_HTTP_RELAY`; services inside a managed sandbox continue to use `sandbox tunnel create SANDBOX_ID --port PORT`.
 
 ## What is already real
 
@@ -83,6 +83,7 @@ sandbox delete 019f... --wait
 | CLI lifecycle, agent profiles, JSON output, bounded exec | Implemented |
 | MCP 2025-11-25 stdio server with structured tool results | Implemented |
 | Wildcard HTTP/WebSocket tunnels with per-sandbox edge networks | Implemented; custom HTTPS domains, direct edge, and Cloudflare ingress documented |
+| Local HTTP/WebSocket sharing on the deployment wildcard | Implemented; ephemeral exact-host routes, bounded sessions/bodies, automatic revocation |
 | Codex, Claude Code, OpenCode, Pi image builder | Implemented with pinned versions |
 | Aider and Goose profiles | Implemented using their official images |
 | OIDC/SAML, tenant RBAC, secret broker, interactive PTY, raw TCP tunnels | Design boundary; not implemented in v0.1 |

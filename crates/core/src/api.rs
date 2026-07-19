@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     AssignmentId, NodeId, OperationId, SandboxId,
@@ -33,6 +34,75 @@ pub struct TunnelCapabilities {
     pub public_scheme: Option<String>,
     #[serde(default)]
     pub protocols: Vec<ExposureProtocol>,
+    #[serde(default)]
+    pub local_relay_enabled: bool,
+    pub local_relay_url: Option<String>,
+}
+
+/// Messages sent from the hosted relay to a connected `sandbox http` client.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LocalRelayServerMessage {
+    Ready {
+        public_url: String,
+        hostname: String,
+        expires_at: DateTime<Utc>,
+    },
+    HttpRequest {
+        request_id: Uuid,
+        method: String,
+        uri: String,
+        headers: Vec<(String, String)>,
+        body_base64: String,
+    },
+    WebSocketOpen {
+        request_id: Uuid,
+        uri: String,
+        headers: Vec<(String, String)>,
+    },
+    WebSocketFrame {
+        request_id: Uuid,
+        frame: RelayWebSocketFrame,
+    },
+    WebSocketClose {
+        request_id: Uuid,
+    },
+    Error {
+        message: String,
+    },
+}
+
+/// Messages sent from the local CLI back to the hosted relay.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LocalRelayClientMessage {
+    HttpResponse {
+        request_id: Uuid,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body_base64: String,
+    },
+    WebSocketReady {
+        request_id: Uuid,
+        error: Option<String>,
+    },
+    WebSocketFrame {
+        request_id: Uuid,
+        frame: RelayWebSocketFrame,
+    },
+    WebSocketClosed {
+        request_id: Uuid,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum RelayWebSocketFrame {
+    Text(String),
+    Binary(String),
+    Ping(String),
+    Pong(String),
+    Close { code: Option<u16>, reason: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

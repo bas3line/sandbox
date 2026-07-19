@@ -46,6 +46,27 @@ pub struct TunnelConfig {
     pub edge_cert_resolver: Option<String>,
     #[serde(default = "default_max_tunnels")]
     pub max_per_sandbox: usize,
+    /// Allow ephemeral tunnels from a developer workstation over the relay WebSocket.
+    #[serde(default)]
+    pub local_relay_enabled: bool,
+    /// Require the operator bearer token before accepting a local relay connection.
+    #[serde(default = "default_true")]
+    pub local_relay_require_auth: bool,
+    /// Internal URL used by the HTTP edge for exact-host local relay routes.
+    #[serde(default = "default_local_relay_upstream")]
+    pub local_relay_upstream: String,
+    /// Maximum number of simultaneous local relay sessions on one controller.
+    #[serde(default = "default_max_local_relays")]
+    pub max_local_relays: usize,
+    /// Maximum simultaneous local relays attributed to one client address.
+    #[serde(default = "default_max_local_relays_per_client")]
+    pub max_local_relays_per_client: usize,
+    /// Maximum request or response body transported by the HTTP relay.
+    #[serde(default = "default_local_relay_body_limit")]
+    pub local_relay_body_limit_bytes: usize,
+    /// Hard lifetime for an ephemeral local relay session.
+    #[serde(default = "default_local_relay_ttl")]
+    pub local_relay_ttl_seconds: u64,
 }
 
 impl Default for TunnelConfig {
@@ -61,6 +82,13 @@ impl Default for TunnelConfig {
             edge_tls: true,
             edge_cert_resolver: default_tunnel_cert_resolver(),
             max_per_sandbox: default_max_tunnels(),
+            local_relay_enabled: false,
+            local_relay_require_auth: true,
+            local_relay_upstream: default_local_relay_upstream(),
+            max_local_relays: default_max_local_relays(),
+            max_local_relays_per_client: default_max_local_relays_per_client(),
+            local_relay_body_limit_bytes: default_local_relay_body_limit(),
+            local_relay_ttl_seconds: default_local_relay_ttl(),
         }
     }
 }
@@ -114,6 +142,37 @@ impl TunnelConfig {
                 "tunnel.max_per_sandbox must be between 1 and 32".into(),
             ));
         }
+        let relay_upstream = Url::parse(&self.local_relay_upstream).map_err(|_| {
+            CoreError::Validation("tunnel.local_relay_upstream must be a valid HTTP URL".into())
+        })?;
+        if relay_upstream.scheme() != "http"
+            || relay_upstream.host_str().is_none()
+            || relay_upstream.cannot_be_a_base()
+            || relay_upstream.username() != ""
+            || relay_upstream.password().is_some()
+        {
+            return Err(CoreError::Validation(
+                "tunnel.local_relay_upstream must be an internal HTTP URL without credentials"
+                    .into(),
+            ));
+        }
+        if !(1..=10_000).contains(&self.max_local_relays)
+            || !(1..=100).contains(&self.max_local_relays_per_client)
+        {
+            return Err(CoreError::Validation(
+                "local relay limits are outside the supported range".into(),
+            ));
+        }
+        if !(65_536..=67_108_864).contains(&self.local_relay_body_limit_bytes) {
+            return Err(CoreError::Validation(
+                "tunnel.local_relay_body_limit_bytes must be between 64 KiB and 64 MiB".into(),
+            ));
+        }
+        if !(60..=86_400).contains(&self.local_relay_ttl_seconds) {
+            return Err(CoreError::Validation(
+                "tunnel.local_relay_ttl_seconds must be between 60 seconds and 24 hours".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -162,11 +221,26 @@ fn default_tunnel_entrypoint() -> String {
 fn default_tunnel_cert_resolver() -> Option<String> {
     Some("letsencrypt".into())
 }
+fn default_local_relay_upstream() -> String {
+    "http://controller:8080".into()
+}
 const fn default_true() -> bool {
     true
 }
 const fn default_max_tunnels() -> usize {
     8
+}
+const fn default_max_local_relays() -> usize {
+    100
+}
+const fn default_max_local_relays_per_client() -> usize {
+    3
+}
+const fn default_local_relay_body_limit() -> usize {
+    16 * 1_048_576
+}
+const fn default_local_relay_ttl() -> u64 {
+    14_400
 }
 
 impl SandboxConfig {

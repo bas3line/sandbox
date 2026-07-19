@@ -80,6 +80,20 @@ SANDBOX__TUNNEL__BASE_DOMAIN=tunnel.example.com
 SANDBOX__TUNNEL__PUBLIC_SCHEME=https
 ```
 
+An operator may additionally enable workstation-to-edge sharing for `sandbox http PORT`:
+
+```text
+SANDBOX__TUNNEL__LOCAL_RELAY_ENABLED=true
+SANDBOX__TUNNEL__LOCAL_RELAY_REQUIRE_AUTH=true
+SANDBOX__TUNNEL__LOCAL_RELAY_UPSTREAM=http://controller:8080
+SANDBOX__TUNNEL__MAX_LOCAL_RELAYS=100
+SANDBOX__TUNNEL__MAX_LOCAL_RELAYS_PER_CLIENT=3
+SANDBOX__TUNNEL__LOCAL_RELAY_BODY_LIMIT_BYTES=16777216
+SANDBOX__TUNNEL__LOCAL_RELAY_TTL_SECONDS=14400
+```
+
+The Compose stack shares the exact-host route directory between the controller and edge and initializes it with controller-only write permissions. Keep authentication required for private installations. An intentionally public developer relay may disable connection authentication, but its URLs remain unauthenticated and Internet-facing; place Cloudflare/WAF rate controls in front and keep the session limits conservative.
+
 See [tunnels.md](tunnels.md) for every key, wildcard DNS, direct Traefik, Caddy on-demand TLS, proxied Cloudflare Full (strict), outbound Cloudflare Tunnel ingress, lifecycle behavior, and troubleshooting. The task-oriented [custom public domains guide](how-to-setup/custom-public-domains.md) includes the complete certificate and verification flow. `SANDBOX_PORT=127.0.0.1:8080` limits the optional Compose host port to loopback when a private connector is the only ingress path.
 
 Keep `tunnel.public_scheme = "https"` for normal deployments. Set it to `http` only for the documented fixed-proxied-wildcard compatibility mode, and pair it with an HTTP edge entrypoint and disabled edge TLS so returned URLs match reality.

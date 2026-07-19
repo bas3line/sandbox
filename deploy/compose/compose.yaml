@@ -1,6 +1,13 @@
 name: sandbox
 
 services:
+  tunnel-routes-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "chown 10001:10001 /routes && chmod 0750 /routes"]
+    volumes:
+      - tunnel-routes:/routes
+    restart: "no"
+
   postgres:
     image: postgres:18-alpine
     environment:
@@ -38,12 +45,23 @@ services:
       SANDBOX__TUNNEL__EDGE_TLS: ${SANDBOX_TUNNEL_EDGE_TLS:-true}
       SANDBOX__TUNNEL__EDGE_CERT_RESOLVER: ${SANDBOX_TUNNEL_CERT_RESOLVER:-letsencrypt}
       SANDBOX__TUNNEL__MAX_PER_SANDBOX: ${SANDBOX_TUNNEL_MAX_PER_SANDBOX:-8}
+      SANDBOX__TUNNEL__LOCAL_RELAY_ENABLED: ${SANDBOX_LOCAL_RELAY_ENABLED:-false}
+      SANDBOX__TUNNEL__LOCAL_RELAY_REQUIRE_AUTH: ${SANDBOX_LOCAL_RELAY_REQUIRE_AUTH:-true}
+      SANDBOX__TUNNEL__LOCAL_RELAY_UPSTREAM: ${SANDBOX_LOCAL_RELAY_UPSTREAM:-http://controller:8080}
+      SANDBOX__TUNNEL__MAX_LOCAL_RELAYS: ${SANDBOX_MAX_LOCAL_RELAYS:-100}
+      SANDBOX__TUNNEL__MAX_LOCAL_RELAYS_PER_CLIENT: ${SANDBOX_MAX_LOCAL_RELAYS_PER_CLIENT:-3}
+      SANDBOX__TUNNEL__LOCAL_RELAY_BODY_LIMIT_BYTES: ${SANDBOX_LOCAL_RELAY_BODY_LIMIT_BYTES:-16777216}
+      SANDBOX__TUNNEL__LOCAL_RELAY_TTL_SECONDS: ${SANDBOX_LOCAL_RELAY_TTL_SECONDS:-14400}
       RUST_LOG: ${RUST_LOG:-sandboxd=info,tower_http=info}
     ports:
       - "${SANDBOX_PORT:-8080}:8080"
     depends_on:
+      tunnel-routes-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    volumes:
+      - tunnel-routes:/var/lib/sandbox/tunnels
     healthcheck:
       test: ["CMD", "sandbox", "--server", "http://127.0.0.1:8080", "doctor"]
       interval: 5s

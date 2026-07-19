@@ -40,6 +40,14 @@ sandbox agent list
 
 `sandbox doctor` must report the expected controller version and tunnel configuration before an agent creates resources.
 
+To share a service already running on the workstation, no managed sandbox is needed:
+
+```sh
+sandbox http 4321
+```
+
+The public URL uses the hosted `*.tunnel.yshubham.com` wildcard by default. A self-hosted installation sets `SANDBOX_HTTP_RELAY=https://relay.tunnel.example.com`. Ctrl-C revokes the route.
+
 ## 4. Register MCP clients
 
 All native clients launch the same local stdio process. Existing entries should point to the absolute `sandbox-mcp` path when desktop applications do not inherit the shell `PATH`. A local wrapper that reads the controller URL and token from the operating-system secret store is also valid and avoids plaintext agent configuration.

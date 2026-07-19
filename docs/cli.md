@@ -61,12 +61,13 @@ Deletion removes runtime resources. The stopped control-plane record remains for
 
 ```sh
 sandbox http 3000
-sandbox http 4321 --provider cloudflare
+sandbox http 4321 --subdomain design-review
+SANDBOX_HTTP_RELAY=https://relay.tunnel.example.com sandbox http 8080
 ```
 
-`sandbox http PORT` checks that the port is listening on local IPv4 or IPv6, starts a temporary public tunnel, prints its HTTPS URL, and stays attached until Ctrl-C. It does not contact `SANDBOX_URL` and does not require a running Sandbox controller.
+`sandbox http PORT` checks that the port is listening on local IPv4 or IPv6, connects to the hosted Sandbox relay over an outbound WebSocket, prints the temporary HTTPS URL, and stays attached until Ctrl-C. The default relay is `https://relay.tunnel.yshubham.com`; `SANDBOX_HTTP_RELAY` or `--relay` selects a self-hosted deployment. `SANDBOX_TOKEN` is sent when the selected relay requires operator authentication.
 
-The default `--provider auto` prefers an installed `cloudflared`; if it is unavailable, it uses the system SSH client with [localhost.run](https://localhost.run/). Override it with `--provider cloudflare` or `--provider localhost-run`, or set `SANDBOX_HTTP_PROVIDER`. [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) are intended for development and testing. The localhost.run path is a third-party SSH relay. Treat either URL as public and do not share admin panels, credentials, or private data.
+The relay supports ordinary HTTP plus WebSocket upgrades such as Vite HMR. It forwards to `127.0.0.1:PORT`, deliberately does not preserve the public `Host` or `Origin`, and never asks a development server to trust a random hostname. The route is exact-host, expires at the server TTL, and is removed immediately when the CLI disconnects. The URL is unauthenticated and public; do not share admin panels, credentials, or private data.
 
 ## Public tunnels from managed sandboxes
 
