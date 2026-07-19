@@ -13,9 +13,13 @@
 
 **A self-hosted Rust control plane for disposable coding environments and AI agents.**
 
-[Architecture](docs/architecture.md) · [Security](docs/security.md) · [Server setup](docs/how-to-setup/server.md) · [Client setup](docs/how-to-setup/client.md) · [Custom domains](docs/how-to-setup/custom-public-domains.md) · [CLI](docs/cli.md) · [MCP](docs/mcp.md)
+[Architecture](docs/architecture.md) · [Security](docs/security.md) · [Setup guides](https://github.com/bas3line/sandbox/tree/main/docs/how-to-setup) · [Server setup](docs/how-to-setup/server.md) · [Client setup](docs/how-to-setup/client.md) · [Custom domains](docs/how-to-setup/custom-public-domains.md) · [CLI](docs/cli.md) · [MCP](docs/mcp.md)
 
 </div>
+
+<p align="center">
+  <img src="public/ChatGPT%20Image%20Jul%2019,%202026,%2010_31_43%20PM.png" alt="Bas3line Sandbox: a safe playground for coding agents" width="100%">
+</p>
 
 ## One-command workstation setup
 
