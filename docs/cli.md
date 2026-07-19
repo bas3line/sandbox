@@ -67,7 +67,7 @@ SANDBOX_HTTP_RELAY=https://relay.tunnel.example.com sandbox http 8080
 
 `sandbox http PORT` checks that the port is listening on local IPv4 or IPv6, connects to the hosted Sandbox relay over an outbound WebSocket, prints the temporary HTTPS URL, and stays attached until Ctrl-C. The default relay is `https://relay.tunnel.yshubham.com`; `SANDBOX_HTTP_RELAY` or `--relay` selects a self-hosted deployment. `SANDBOX_TOKEN` is sent when the selected relay requires operator authentication.
 
-The relay supports ordinary HTTP plus WebSocket upgrades such as Vite HMR. It forwards to `127.0.0.1:PORT`, deliberately does not preserve the public `Host` or `Origin`, and never asks a development server to trust a random hostname. The route is exact-host, expires at the server TTL, and is removed immediately when the CLI disconnects. The URL is unauthenticated and public; do not share admin panels, credentials, or private data.
+The relay supports ordinary HTTP plus WebSocket upgrades such as Vite HMR. It detects whether the app is listening on IPv4 (`127.0.0.1`) or IPv6 (`::1`) and forwards to that exact loopback address. It deliberately does not preserve the public `Host` or `Origin`, so a development server never has to trust a random hostname. The route is exact-host, expires at the server TTL, and is removed immediately when the CLI disconnects. The URL is unauthenticated and public; do not share admin panels, credentials, or private data.
 
 ## Public tunnels from managed sandboxes
 

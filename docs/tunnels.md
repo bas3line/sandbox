@@ -12,7 +12,7 @@ The current implementation supports public HTTP and WebSocket services. It delib
 
 ## Share a workstation service
 
-`sandbox http PORT` is the ephemeral local counterpart to a managed sandbox tunnel. The CLI opens one outbound WebSocket to `relay.<base-domain>`, the controller creates a collision-resistant exact-host route, and the edge sends requests back over that session to `127.0.0.1:PORT`. Regular HTTP and WebSocket upgrades are supported. The local request uses the loopback host and omits the public Origin, which lets Vite and similar development servers keep their host allowlist intact.
+`sandbox http PORT` is the ephemeral local counterpart to a managed sandbox tunnel. The CLI opens one outbound WebSocket to `relay.<base-domain>`, the controller creates a collision-resistant exact-host route, and the edge sends requests back over that session to the detected IPv4 (`127.0.0.1`) or IPv6 (`::1`) loopback listener. Regular HTTP and WebSocket upgrades are supported. The local request uses the loopback host and omits the public Origin, which lets Vite and similar development servers keep their host allowlist intact.
 
 ```sh
 sandbox http 4321

@@ -1,4 +1,9 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -29,7 +34,7 @@ pub(crate) async fn run(
     token: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    ensure_local_listener(port).await?;
+    let local_address = ensure_local_listener(port).await?;
     relay_url
         .set_scheme(match relay_url.scheme() {
             "https" => "wss",
@@ -111,7 +116,7 @@ pub(crate) async fn run(
                                 ready = true;
                                 if json {
                                     println!("{}", serde_json::to_string(&serde_json::json!({
-                                        "local_url": format!("http://localhost:{port}"),
+                                        "local_url": format!("http://{local_address}"),
                                         "provider": "sandbox",
                                         "public_url": public_url,
                                         "expires_at": expires_at,
@@ -126,7 +131,7 @@ pub(crate) async fn run(
                                 let outbound = outbound_tx.clone();
                                 let http = http.clone();
                                 tokio::spawn(async move {
-                                    let response = relay_http_request(http, port, method, uri, headers, body_base64).await;
+                                    let response = relay_http_request(http, local_address, method, uri, headers, body_base64).await;
                                     let message = match response {
                                         Ok((status, headers, body_base64)) => LocalRelayClientMessage::HttpResponse {
                                             request_id,
@@ -150,7 +155,7 @@ pub(crate) async fn run(
                                 let (input_tx, input_rx) = mpsc::channel(256);
                                 inputs.lock().await.insert(request_id, input_tx);
                                 tokio::spawn(async move {
-                                    relay_local_websocket(port, request_id, uri, headers, input_rx, outbound.clone()).await;
+                                    relay_local_websocket(local_address, request_id, uri, headers, input_rx, outbound.clone()).await;
                                     inputs.lock().await.remove(&request_id);
                                 });
                             }
@@ -187,13 +192,13 @@ pub(crate) async fn run(
 
 async fn relay_http_request(
     http: reqwest::Client,
-    port: u16,
+    local_address: SocketAddr,
     method: String,
     uri: String,
     headers: Vec<(String, String)>,
     body_base64: String,
 ) -> Result<(u16, Vec<(String, String)>, String)> {
-    let url = local_url(port, &uri, "http")?;
+    let url = local_url(local_address, &uri, "http")?;
     let method = Method::from_bytes(method.as_bytes()).context("invalid HTTP method")?;
     let body = BASE64.decode(body_base64).context("invalid request body")?;
     if body.len() > MAX_RELAY_BODY_BYTES {
@@ -240,7 +245,7 @@ async fn relay_http_request(
 }
 
 async fn relay_local_websocket(
-    port: u16,
+    local_address: SocketAddr,
     request_id: Uuid,
     uri: String,
     headers: Vec<(String, String)>,
@@ -248,7 +253,7 @@ async fn relay_local_websocket(
     outbound: mpsc::Sender<Message>,
 ) {
     let result = async {
-        let url = local_url(port, &uri, "ws")?;
+        let url = local_url(local_address, &uri, "ws")?;
         let mut request = url
             .as_str()
             .into_client_request()
@@ -309,19 +314,24 @@ async fn relay_local_websocket(
     .await;
 }
 
-fn local_url(port: u16, uri: &str, scheme: &str) -> Result<Url> {
+fn local_url(local_address: SocketAddr, uri: &str, scheme: &str) -> Result<Url> {
     if !uri.starts_with('/') || uri.starts_with("//") {
         bail!("invalid relay request target");
     }
-    let url = Url::parse(&format!("{scheme}://127.0.0.1:{port}{uri}"))
+    let url = Url::parse(&format!("{scheme}://{local_address}{uri}"))
         .context("build local request URL")?;
-    if url.host_str() != Some("127.0.0.1") || url.port() != Some(port) {
+    let host_matches = match (url.host(), local_address.ip()) {
+        (Some(url::Host::Ipv4(actual)), IpAddr::V4(expected)) => actual == expected,
+        (Some(url::Host::Ipv6(actual)), IpAddr::V6(expected)) => actual == expected,
+        _ => false,
+    };
+    if !host_matches || url.port() != Some(local_address.port()) {
         bail!("relay request escaped the local service origin");
     }
     Ok(url)
 }
 
-async fn ensure_local_listener(port: u16) -> Result<()> {
+async fn ensure_local_listener(port: u16) -> Result<SocketAddr> {
     let addresses: [std::net::SocketAddr; 2] = [
         ([127, 0, 0, 1], port).into(),
         ([0, 0, 0, 0, 0, 0, 0, 1], port).into(),
@@ -331,7 +341,7 @@ async fn ensure_local_listener(port: u16) -> Result<()> {
             tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(address)).await,
             Ok(Ok(_))
         ) {
-            return Ok(());
+            return Ok(address);
         }
     }
     bail!(
@@ -416,17 +426,30 @@ async fn send_protocol_message(
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
     use super::{ensure_local_listener, local_url};
 
     #[test]
     fn local_url_never_accepts_an_absolute_target() {
-        assert!(local_url(4321, "https://example.com/", "http").is_err());
-        assert!(local_url(4321, "//example.com/", "http").is_err());
+        let local_address = SocketAddr::from((Ipv4Addr::LOCALHOST, 4321));
+        assert!(local_url(local_address, "https://example.com/", "http").is_err());
+        assert!(local_url(local_address, "//example.com/", "http").is_err());
         assert_eq!(
-            local_url(4321, "/hello?name=world", "http")
+            local_url(local_address, "/hello?name=world", "http")
                 .expect("local URL")
                 .as_str(),
             "http://127.0.0.1:4321/hello?name=world"
+        );
+        assert_eq!(
+            local_url(
+                SocketAddr::from((Ipv6Addr::LOCALHOST, 4321)),
+                "/hello?name=world",
+                "http"
+            )
+            .expect("IPv6 local URL")
+            .as_str(),
+            "http://[::1]:4321/hello?name=world"
         );
     }
 
@@ -436,8 +459,21 @@ mod tests {
             .await
             .expect("bind local listener");
         let port = listener.local_addr().expect("listener address").port();
-        ensure_local_listener(port)
+        let address = ensure_local_listener(port)
             .await
             .expect("detect local listener");
+        assert_eq!(address, listener.local_addr().expect("listener address"));
+    }
+
+    #[tokio::test]
+    async fn detects_an_ipv6_only_local_listener() {
+        let Ok(listener) = tokio::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await else {
+            return;
+        };
+        let expected = listener.local_addr().expect("listener address");
+        let address = ensure_local_listener(expected.port())
+            .await
+            .expect("detect IPv6 local listener");
+        assert_eq!(address, expected);
     }
 }

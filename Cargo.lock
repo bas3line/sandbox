@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-aegis"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "sandbox-core",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64",
@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-client"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "reqwest",
  "sandbox-core",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "config",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-events"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-mcp"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -2157,7 +2157,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-runtime"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "sandbox-core",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox-storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2190,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "sandboxd"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum",
