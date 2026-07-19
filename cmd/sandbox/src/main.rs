@@ -7,12 +7,12 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use sandbox_client::SandboxClient;
 use sandbox_core::{
-    OperationId, SandboxId,
+    OperationId, SandboxId, TunnelId,
     agent::{built_in_agent_profiles, find_agent_profile},
-    api::ExecSandboxRequest,
+    api::{CreateTunnelRequest, ExecSandboxRequest},
     model::{
-        CommandSpec, DataSensitivity, IsolationPreference, NetworkMode, Operation, OperationState,
-        ResourceSpec, SandboxSpec, WorkloadSignals,
+        CommandSpec, DataSensitivity, ExposureProtocol, IsolationPreference, NetworkMode,
+        Operation, OperationState, PortExposure, ResourceSpec, SandboxSpec, WorkloadSignals,
     },
 };
 use secrecy::SecretString;
@@ -63,6 +63,11 @@ enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Create, list, and remove public HTTP tunnels.
+    Tunnel {
+        #[command(subcommand)]
+        command: TunnelCommands,
+    },
     /// Print MCP client configuration for sandbox-mcp.
     McpConfig,
 }
@@ -97,6 +102,9 @@ struct CreateArgs {
     needs_secrets: bool,
     #[arg(long = "label", value_parser = parse_key_value)]
     labels: Vec<(String, String)>,
+    /// Publish PORT, optionally with a custom PORT=SUBDOMAIN mapping.
+    #[arg(long = "expose", value_parser = parse_exposure)]
+    exposures: Vec<PortExposure>,
     #[arg(last = true)]
     command: Vec<String>,
 }
@@ -131,6 +139,29 @@ enum AgentCommands {
         ttl: u64,
         #[arg(last = true)]
         args: Vec<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TunnelCommands {
+    /// Publish one HTTP/WebSocket port from a running sandbox.
+    Create {
+        id: SandboxId,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        subdomain: Option<String>,
+        #[arg(long)]
+        no_wait: bool,
+    },
+    /// List the public URLs allocated to a sandbox.
+    List { id: SandboxId },
+    /// Remove a public tunnel and its isolated edge network when no routes remain.
+    Delete {
+        id: SandboxId,
+        tunnel_id: TunnelId,
+        #[arg(long)]
+        no_wait: bool,
     },
 }
 
@@ -171,6 +202,19 @@ async fn main() -> Result<()> {
                     "ok  sandboxd {}  store={}  {}",
                     health.version, health.store, cli.server
                 );
+                if health.tunnels.enabled {
+                    println!(
+                        "tunnels  {}://*.{}",
+                        health.tunnels.public_scheme.as_deref().unwrap_or("https"),
+                        health
+                            .tunnels
+                            .base_domain
+                            .as_deref()
+                            .unwrap_or("unconfigured")
+                    );
+                } else {
+                    println!("tunnels  disabled");
+                }
             }
         }
         Commands::Create(args) => {
@@ -187,6 +231,9 @@ async fn main() -> Result<()> {
                     response.sandbox.isolation,
                     response.operation.id
                 );
+                for tunnel in &response.sandbox.tunnels {
+                    println!("tunnel  {}  {:?}", tunnel.public_url, tunnel.state);
+                }
             }
         }
         Commands::List { tenant } => {
@@ -257,6 +304,7 @@ async fn main() -> Result<()> {
             render_operation(&operation, cli.json)?;
         }
         Commands::Agent { command } => run_agent(command, &client, cli.json).await?,
+        Commands::Tunnel { command } => run_tunnel(command, &client, cli.json).await?,
         Commands::McpConfig => {
             print_json(
                 &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":cli.server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
@@ -304,9 +352,95 @@ fn create_spec(args: CreateArgs) -> SandboxSpec {
         ttl_seconds: args.ttl,
         labels: args.labels.into_iter().collect(),
         placement: Default::default(),
-        exposures: Vec::new(),
+        exposures: args.exposures,
         agent: None,
     }
+}
+
+async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool) -> Result<()> {
+    match command {
+        TunnelCommands::Create {
+            id,
+            port,
+            subdomain,
+            no_wait,
+        } => {
+            let response = client
+                .create_tunnel(
+                    id,
+                    CreateTunnelRequest {
+                        container_port: port,
+                        protocol: ExposureProtocol::Http,
+                        subdomain,
+                        authenticated: false,
+                    },
+                )
+                .await?;
+            if no_wait {
+                if json {
+                    print_json(&response)?;
+                } else {
+                    println!(
+                        "{}  operation={}",
+                        response.tunnel.public_url, response.operation.id
+                    );
+                }
+                return Ok(());
+            }
+            let operation = wait_for(client, response.operation.id, 120).await?;
+            if operation.state == OperationState::Failed {
+                render_operation(&operation, json)?;
+            }
+            let sandbox = client.get_sandbox(id).await?;
+            let tunnel = sandbox
+                .tunnels
+                .into_iter()
+                .find(|tunnel| tunnel.id == response.tunnel.id)
+                .context("activated tunnel was absent from sandbox state")?;
+            if json {
+                print_json(&serde_json::json!({"tunnel": tunnel, "operation": operation}))?;
+            } else {
+                println!("{}", tunnel.public_url);
+            }
+        }
+        TunnelCommands::List { id } => {
+            let tunnels = client.get_sandbox(id).await?.tunnels;
+            if json {
+                print_json(&tunnels)?;
+            } else if tunnels.is_empty() {
+                println!("No tunnels.");
+            } else {
+                println!("ID                                    STATE       PORT   URL");
+                for tunnel in tunnels {
+                    println!(
+                        "{:<36}  {:<10}  {:<5}  {}",
+                        tunnel.id,
+                        format!("{:?}", tunnel.state).to_lowercase(),
+                        tunnel.container_port,
+                        tunnel.public_url
+                    );
+                }
+            }
+        }
+        TunnelCommands::Delete {
+            id,
+            tunnel_id,
+            no_wait,
+        } => {
+            let response = client.delete_tunnel(id, tunnel_id).await?;
+            if no_wait {
+                if json {
+                    print_json(&response)?;
+                } else {
+                    println!("{}", response.operation.id);
+                }
+            } else {
+                let operation = wait_for(client, response.operation.id, 120).await?;
+                render_operation(&operation, json)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_agent(command: AgentCommands, client: &SandboxClient, json: bool) -> Result<()> {
@@ -401,4 +535,24 @@ fn parse_key_value(value: &str) -> Result<(String, String), String> {
         return Err("key cannot be empty".into());
     }
     Ok((key.into(), value.into()))
+}
+
+fn parse_exposure(value: &str) -> Result<PortExposure, String> {
+    let (port, subdomain) = value
+        .split_once('=')
+        .map_or((value, None), |(port, subdomain)| (port, Some(subdomain)));
+    let container_port = port
+        .parse::<u16>()
+        .map_err(|_| "exposure must be PORT or PORT=SUBDOMAIN".to_owned())?;
+    if container_port == 0 || subdomain.is_some_and(str::is_empty) {
+        return Err("exposure must be PORT or PORT=SUBDOMAIN".into());
+    }
+    let exposure = PortExposure {
+        container_port,
+        protocol: ExposureProtocol::Http,
+        subdomain: subdomain.map(str::to_owned),
+        authenticated: false,
+    };
+    exposure.validate().map_err(|error| error.to_string())?;
+    Ok(exposure)
 }

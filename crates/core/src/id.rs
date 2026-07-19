@@ -44,3 +44,4 @@ typed_id!(AssignmentId);
 typed_id!(NodeId);
 typed_id!(OperationId);
 typed_id!(SandboxId);
+typed_id!(TunnelId);

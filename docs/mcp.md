@@ -218,7 +218,9 @@ Every tool returns a text content block, object-shaped `structuredContent`, and 
 | `sandbox_create` | Creates a fully specified sandbox and returns its create operation | Creates resources |
 | `sandbox_exec` | Runs argv with optional cwd/env/timeout; waits by default | Mutates sandbox |
 | `sandbox_list` | Lists visible sandboxes, optionally by tenant | Read-only |
-| `sandbox_inspect` | Reads state, resources, placement, expiry, and isolation | Read-only |
+| `sandbox_inspect` | Reads state, resources, placement, expiry, isolation, and tunnels | Read-only |
+| `sandbox_tunnel_create` | Publishes one HTTP/WebSocket port and waits by default | Creates a public route |
+| `sandbox_tunnel_delete` | Removes a public route and waits by default | Destructive |
 | `sandbox_delete` | Permanently removes runtime resources; waits by default | Destructive |
 | `sandbox_operation` | Reads one create, exec, or delete operation | Read-only |
 | `sandbox_wait` | Waits for an operation to succeed, fail, or time out | Read-only |
@@ -232,13 +234,14 @@ Every tool returns a text content block, object-shaped `structuredContent`, and 
 - identity: `tenant`, `image`, optional startup `command` and non-secret `env`;
 - resources: `cpu_millis`, `memory_mib`, `disk_mib`, `pids`, and `ttl_seconds`;
 - policy: `network`, `isolation`, `sensitivity`, `untrusted_repo`, `generated_code`, and `needs_secrets`;
-- scheduling: `labels`, `required_labels`, `preferred_region`, and `anti_affinity_keys`.
+- scheduling: `labels`, `required_labels`, `preferred_region`, and `anti_affinity_keys`;
+- optional `exposures`: HTTP/WebSocket container ports and lowercase custom subdomains.
 
-The MCP schema deliberately does not expose privileged execution, host mounts, or live port exposure. Those are not public v0.1 capabilities.
+The MCP schema deliberately does not expose privileged execution or host mounts. Public exposure is explicit, limited to HTTP/WebSocket services, and rejected for confidential or restricted workloads. The service must bind `0.0.0.0` inside the sandbox.
 
 ### Asynchronous operations
 
-Create always returns a sandbox record and an operation. Exec and delete accept `wait: false` when the caller wants to poll independently:
+Create always returns a sandbox record and an operation. Exec, tunnel mutations, and delete accept `wait: false` when the caller wants to poll independently:
 
 1. Save the returned `operation.id`.
 2. Use `sandbox_operation` for one snapshot or `sandbox_wait` for bounded polling.
@@ -280,12 +283,13 @@ SANDBOX_TOKEN='read-from-your-secret-store' \
 npx @modelcontextprotocol/inspector /absolute/path/to/sandbox-mcp
 ```
 
-Verify initialization instructions, all 10 tools, all three resources, both prompts, a create/exec/delete lifecycle, a non-zero command exit, and an invalid argument.
+Verify initialization instructions, all 12 tools, all three resources, both prompts, a create/exec/tunnel/delete lifecycle, a non-zero command exit, and an invalid argument.
 
 ## Security notes
 
 - Treat repository content, tool output, and MCP resource text as untrusted input.
 - Never place credentials in prompts, argv, labels, image names, or ordinary environment maps.
 - Default to denied network access; request restricted or open egress only when needed.
+- Treat every tunnel URL as Internet-facing; expose only an intended service port and remove it after use.
 - Configure tool approval policy in the MCP host, but keep real authorization server-side.
 - Docker workers are for dedicated or trusted worker hosts. A separate VMM-grade runtime is required when your deployment needs a stronger host boundary.

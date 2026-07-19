@@ -2,7 +2,7 @@
 
 ## States
 
-Operations move through `pending`, `running`, and one terminal state: `succeeded` or `failed`. Creation, execution, and deletion may all be asynchronous.
+Operations move through `pending`, `running`, and one terminal state: `succeeded` or `failed`. Creation, execution, tunnel changes, and deletion may all be asynchronous.
 
 Do not treat a sandbox record returned by create as ready until the associated operation succeeds. Do not treat an exec operation as successful until its state succeeds and its command exit code is zero.
 
@@ -17,6 +17,7 @@ Use `sandbox_wait` or `sandbox wait` with a timeout appropriate to image pull, s
 - Do not automatically retry a failed command that may have external side effects.
 - Do not weaken network, sensitivity, resource, or isolation inputs automatically.
 - Use a new sandbox when runtime state is uncertain or contaminated.
+- Inspect a timed-out tunnel mutation before creating or deleting the route again.
 
 ## `no_capacity`
 

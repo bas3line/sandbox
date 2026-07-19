@@ -24,6 +24,19 @@ max_ttl_seconds = 86400
 microvm_risk_threshold = 55
 max_output_bytes = 1048576
 
+[tunnel]
+# Opt in only after wildcard DNS and the edge proxy are configured.
+enabled = false
+base_domain = "tunnel.example.com"
+public_scheme = "https"
+docker_network_prefix = "sandbox-tunnel"
+config_dir = "/var/lib/sandbox/tunnels"
+edge_container = "sandbox-tunnel-edge"
+edge_entrypoint = "websecure"
+edge_tls = true
+edge_cert_resolver = "letsencrypt"
+max_per_sandbox = 8
+
 [node]
 control_plane_url = "http://127.0.0.1:8080"
 name = "worker-01"

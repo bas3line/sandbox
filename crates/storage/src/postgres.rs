@@ -8,12 +8,12 @@ use diesel_async::{
 use sandbox_core::{
     NodeId, OperationId, SandboxId,
     api::{CompleteAssignmentRequest, HeartbeatRequest},
-    model::{Assignment, AssignmentState, NodeRecord, Operation, OperationState, Sandbox},
+    model::{Assignment, AssignmentState, NodeRecord, Operation, OperationState, Sandbox, Tunnel},
 };
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{Store, StoreError, StoreResult};
+use crate::{Store, StoreError, StoreResult, apply_tunnel_completion};
 
 diesel::table! {
     nodes (id) {
@@ -91,6 +91,12 @@ struct NewAssignmentRow {
     lease_until: Option<chrono::DateTime<Utc>>,
     record: Value,
     created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(diesel::QueryableByName)]
+struct JsonRecord {
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    record: Value,
 }
 
 pub struct PgStore {
@@ -287,6 +293,27 @@ impl Store for PgStore {
             .collect()
     }
 
+    async fn find_tunnel_by_hostname(&self, hostname: &str) -> StoreResult<Option<Tunnel>> {
+        let mut connection = self.pool.get().await.map_err(backend)?;
+        let needle = serde_json::json!({
+            "tunnels": [{"hostname": hostname, "state": "active"}]
+        });
+        let row =
+            diesel::sql_query("SELECT record FROM sandboxes WHERE record @> $1::jsonb LIMIT 1")
+                .bind::<diesel::sql_types::Jsonb, _>(needle)
+                .get_result::<JsonRecord>(&mut connection)
+                .await
+                .optional()
+                .map_err(backend)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let sandbox: Sandbox = serde_json::from_value(row.record)?;
+        Ok(sandbox.tunnels.into_iter().find(|tunnel| {
+            tunnel.hostname == hostname && tunnel.state == sandbox_core::model::TunnelState::Active
+        }))
+    }
+
     async fn create_assignment(
         &self,
         assignment: Assignment,
@@ -354,6 +381,7 @@ impl Store for PgStore {
                 "assignment completion identifiers do not match".into(),
             ));
         }
+        let assignment_kind = assignment.kind.clone();
         assignment.state = if request.success {
             AssignmentState::Completed
         } else {
@@ -373,6 +401,12 @@ impl Store for PgStore {
         operation.updated_at = now;
         self.put_operation(&operation).await?;
         let mut sandbox = self.get_sandbox(request.sandbox_id).await?;
+        apply_tunnel_completion(
+            &mut sandbox,
+            &assignment_kind,
+            request.success,
+            request.error.as_deref(),
+        );
         sandbox.state = request.sandbox_state;
         sandbox.failure = request.error;
         sandbox.updated_at = now;

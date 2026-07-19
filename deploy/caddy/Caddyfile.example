@@ -1,0 +1,18 @@
+{
+	email {$SANDBOX_ACME_EMAIL}
+	on_demand_tls {
+		ask http://controller:8080/v1/tunnels/authorize
+	}
+}
+
+{$SANDBOX_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy controller:8080
+}
+
+*.{$SANDBOX_TUNNEL_DOMAIN} {
+	tls {
+		on_demand
+	}
+	reverse_proxy tunnel-edge:8080
+}

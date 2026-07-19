@@ -23,6 +23,10 @@ A worker failed to report completion before lease expiry. Create/delete drivers 
 
 The shipped `sandbox-egress` network is intentionally internal. Add the destination to the controlled proxy/mirror path. Do not switch the tenant to open egress without policy approval.
 
+### Tunnel operation fails
+
+Check that the worker advertises tunnel support, the configured edge container is running, the shared route directory is mounted at both paths, and wildcard DNS points at the public edge. The sandbox service must bind `0.0.0.0`. For TLS failures, inspect edge ACME logs and verify the active hostname returns `204` from `/v1/tunnels/authorize?domain=...`; unknown or inactive names must return `404`.
+
 ### Worker compromised
 
 1. Drain or network-isolate the host.
@@ -41,4 +45,4 @@ Back up PostgreSQL with tested point-in-time recovery. The control database rest
 
 ## Capacity
 
-Advertise allocatable resources after host, runtime, image cache, and emergency reserves. Track peak concurrent sandboxes, dominant requested resources, image pull latency, create latency, exec duration, output truncation, lease retries, and risk-tier demand. Add microVM workers before lowering isolation policy.
+Advertise allocatable resources after host, runtime, image cache, and emergency reserves. Track peak concurrent sandboxes and tunnels, dominant requested resources, image pull latency, create latency, exec duration, output truncation, lease retries, edge certificate/routing failures, and risk-tier demand. Add microVM workers before lowering isolation policy.

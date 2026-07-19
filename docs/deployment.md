@@ -13,7 +13,11 @@ docker compose -f deploy/compose/compose.yaml up --build
 Optional profiles:
 
 ```sh
-# Start the API reverse proxy on port 80.
+# Start the HTTPS API and public-tunnel edge on ports 80/443.
+export SANDBOX_DOMAIN=sandbox.example.com
+export SANDBOX_TUNNEL_ENABLED=true
+export SANDBOX_TUNNEL_DOMAIN=tunnel.example.com
+export SANDBOX_ACME_EMAIL=admin@example.com
 docker compose -f deploy/compose/compose.yaml --profile edge up --build
 
 # Start NATS JetStream, then select it for controller events.
@@ -37,9 +41,9 @@ Do not expose workers publicly. Allow worker-to-controller API traffic, image/ar
 
 ## Reverse proxy and domains
 
-The `edge` Compose profile routes the controller API using Traefik and `SANDBOX_DOMAIN`. In production, terminate TLS at the enterprise edge and forward only to controllers.
+The `edge` Compose profile routes the controller API using `SANDBOX_DOMAIN` and reconciles exact-host HTTP/WebSocket tunnel routes below `SANDBOX_TUNNEL_DOMAIN`. Tunnel routing is disabled unless `SANDBOX_TUNNEL_ENABLED=true`.
 
-`SandboxSpec.exposures` reserves typed port/domain metadata, but the v0.1 controller does not yet create live per-sandbox HTTP or TCP tunnels. Implement exposure through a runtime driver plus an authenticated edge reconciler. Do not infer that recording an exposure in a spec opens a port.
+When an existing Caddy installation owns ports 80/443, use the Caddy Compose overlay and controller-backed on-demand TLS authorization. See [tunnels.md](tunnels.md) for DNS, TLS, configuration, isolation, and verification. Raw TCP forwarding is not implemented.
 
 ## Systemd
 
@@ -84,4 +88,4 @@ Back up database state for audit and control-plane recovery. Sandbox disks remai
 2. Roll controllers first; keep at least one healthy API instance.
 3. Mark a worker draining before replacement (the v0.1 API does not expose this operation; update its node record operationally or stop new scheduling upstream).
 4. Upgrade runtime drivers and worker daemon together when the driver protocol changes.
-5. Verify create, exec, TTL deletion, event delivery, and node loss in a staging pool.
+5. Verify create, exec, tunnel create/delete if enabled, TTL deletion, event delivery, and node loss in a staging pool.

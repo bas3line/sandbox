@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     updated_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sandboxes_tenant_updated_idx ON sandboxes (tenant, updated_at DESC);
+CREATE INDEX IF NOT EXISTS sandboxes_record_gin_idx ON sandboxes USING GIN (record jsonb_path_ops);
 
 CREATE TABLE IF NOT EXISTS operations (
     id UUID PRIMARY KEY,

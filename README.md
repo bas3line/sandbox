@@ -13,7 +13,7 @@
 
 **A self-hosted Rust control plane for disposable coding environments and AI agents.**
 
-[Architecture](docs/architecture.md) · [Security](docs/security.md) · [Deploy](docs/deployment.md) · [CLI](docs/cli.md) · [MCP](docs/mcp.md)
+[Architecture](docs/architecture.md) · [Security](docs/security.md) · [Deploy](docs/deployment.md) · [Tunnels](docs/tunnels.md) · [CLI](docs/cli.md) · [MCP](docs/mcp.md)
 
 </div>
 
@@ -62,6 +62,7 @@ sandbox create --tenant platform --image ubuntu:24.04 \
   --network restricted --untrusted-repo --generated-code
 
 sandbox exec 019f... -- cargo test --workspace
+sandbox tunnel create 019f... --port 3000
 sandbox agent run codex --tenant platform
 sandbox delete 019f... --wait
 ```
@@ -78,9 +79,10 @@ sandbox delete 019f... --wait
 | NATS lifecycle events + zero-service in-memory bus | Implemented |
 | CLI lifecycle, agent profiles, JSON output, bounded exec | Implemented |
 | MCP 2025-11-25 stdio server with structured tool results | Implemented |
+| Wildcard HTTP/WebSocket tunnels with per-sandbox edge networks | Implemented; opt-in and self-hosted |
 | Codex, Claude Code, OpenCode, Pi image builder | Implemented with pinned versions |
 | Aider and Goose profiles | Implemented using their official images |
-| OIDC/SAML, tenant RBAC, secret broker, interactive PTY, live port tunnels | Design boundary; not implemented in v0.1 |
+| OIDC/SAML, tenant RBAC, secret broker, interactive PTY, raw TCP tunnels | Design boundary; not implemented in v0.1 |
 
 This repository is an engineering foundation, not a magic claim that Docker equals a hardened multi-tenant VM. Read the [security model](docs/security.md) before exposing it to hostile tenants.
 
@@ -107,6 +109,7 @@ flowchart LR
     G --> W1["sandboxd worker: Docker"]
     G --> W2["sandboxd worker: external driver"]
     W1 --> X["Hardened containers"]
+    W1 --> T["Private tunnel networks + HTTP edge"]
     W2 --> V["Firecracker / Kata / gVisor / private VMM"]
 ```
 
@@ -132,6 +135,8 @@ cargo run --package sandbox-cli -- create --tenant dev --image ubuntu:24.04 --tt
 ```
 
 The Compose stack intentionally sets the microVM threshold above the score range so it can run on a normal Docker laptop. That is a developer convenience, not the production policy. Production keeps the default threshold of `55` and supplies compatible workers.
+
+To publish sandbox services, point a wildcard DNS record at the edge and enable the opt-in `edge` profile. The full Traefik and Caddy recipes are in [docs/tunnels.md](docs/tunnels.md); real deployment domains and addresses belong in the environment, never the repository.
 
 ## Coding agents
 

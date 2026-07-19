@@ -38,6 +38,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config =
         Arc::new(SandboxConfig::load(args.config.as_deref()).context("load configuration")?);
+    config
+        .tunnel
+        .validate()
+        .context("validate tunnel configuration")?;
     validate_auth(&config, args.role)?;
     let cancel = CancellationToken::new();
     let shutdown = cancel.clone();

@@ -31,6 +31,13 @@ services:
       SANDBOX__BUS__NATS_URL: nats://nats:4222
       # Developer Docker mode only. Production should keep the default 55 and provide microVM workers.
       SANDBOX__POLICY__MICROVM_RISK_THRESHOLD: ${SANDBOX_MICROVM_RISK_THRESHOLD:-101}
+      SANDBOX__TUNNEL__ENABLED: ${SANDBOX_TUNNEL_ENABLED:-false}
+      SANDBOX__TUNNEL__BASE_DOMAIN: ${SANDBOX_TUNNEL_DOMAIN:-tunnel.example.com}
+      SANDBOX__TUNNEL__PUBLIC_SCHEME: ${SANDBOX_TUNNEL_SCHEME:-https}
+      SANDBOX__TUNNEL__EDGE_ENTRYPOINT: ${SANDBOX_TUNNEL_ENTRYPOINT:-websecure}
+      SANDBOX__TUNNEL__EDGE_TLS: ${SANDBOX_TUNNEL_EDGE_TLS:-true}
+      SANDBOX__TUNNEL__EDGE_CERT_RESOLVER: ${SANDBOX_TUNNEL_CERT_RESOLVER:-letsencrypt}
+      SANDBOX__TUNNEL__MAX_PER_SANDBOX: ${SANDBOX_TUNNEL_MAX_PER_SANDBOX:-8}
       RUST_LOG: ${RUST_LOG:-sandboxd=info,tower_http=info}
     ports:
       - "${SANDBOX_PORT:-8080}:8080"
@@ -47,6 +54,8 @@ services:
     labels:
       traefik.enable: "true"
       traefik.http.routers.sandbox.rule: "Host(`${SANDBOX_DOMAIN:-sandbox.localhost}`)"
+      traefik.http.routers.sandbox.entrypoints: "websecure"
+      traefik.http.routers.sandbox.tls.certresolver: "letsencrypt"
       traefik.http.services.sandbox.loadbalancer.server.port: "8080"
 
   worker:
@@ -62,10 +71,21 @@ services:
       SANDBOX__NODE__RUNTIME: docker
       SANDBOX__NODE__DOCKER_RESTRICTED_NETWORK: sandbox-egress
       SANDBOX__NODE__STATE_DIR: /var/lib/sandbox
+      SANDBOX__TUNNEL__ENABLED: ${SANDBOX_TUNNEL_ENABLED:-false}
+      SANDBOX__TUNNEL__BASE_DOMAIN: ${SANDBOX_TUNNEL_DOMAIN:-tunnel.example.com}
+      SANDBOX__TUNNEL__PUBLIC_SCHEME: ${SANDBOX_TUNNEL_SCHEME:-https}
+      SANDBOX__TUNNEL__DOCKER_NETWORK_PREFIX: ${SANDBOX_TUNNEL_NETWORK_PREFIX:-sandbox-tunnel}
+      SANDBOX__TUNNEL__CONFIG_DIR: /var/lib/sandbox/tunnels
+      SANDBOX__TUNNEL__EDGE_CONTAINER: ${SANDBOX_TUNNEL_EDGE_CONTAINER:-sandbox-tunnel-edge}
+      SANDBOX__TUNNEL__EDGE_ENTRYPOINT: ${SANDBOX_TUNNEL_ENTRYPOINT:-websecure}
+      SANDBOX__TUNNEL__EDGE_TLS: ${SANDBOX_TUNNEL_EDGE_TLS:-true}
+      SANDBOX__TUNNEL__EDGE_CERT_RESOLVER: ${SANDBOX_TUNNEL_CERT_RESOLVER:-letsencrypt}
+      SANDBOX__TUNNEL__MAX_PER_SANDBOX: ${SANDBOX_TUNNEL_MAX_PER_SANDBOX:-8}
       RUST_LOG: ${RUST_LOG:-sandboxd=info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - worker-state:/var/lib/sandbox
+      - tunnel-routes:/var/lib/sandbox/tunnels
     networks:
       - default
       - sandbox-egress
@@ -83,16 +103,29 @@ services:
     restart: unless-stopped
 
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.7.8
+    container_name: sandbox-tunnel-edge
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${SANDBOX_ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
     profiles: ["edge"]
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount the parent directory so atomic route replacement is observed reliably.
+      - tunnel-routes:/etc/traefik/dynamic:ro
+      - traefik-acme:/letsencrypt
     restart: unless-stopped
 
 networks:
@@ -104,4 +137,6 @@ networks:
 volumes:
   postgres-data:
   worker-state:
+  tunnel-routes:
+  traefik-acme:
   nats-data:

@@ -3,24 +3,31 @@ use std::{collections::BTreeMap, io::Write, process::Stdio, time::Duration};
 use async_trait::async_trait;
 use sandbox_core::{
     SandboxId,
-    model::{CommandOutput, CommandSpec, IsolationTier, NetworkMode, SandboxSpec},
+    config::TunnelConfig,
+    model::{CommandOutput, CommandSpec, IsolationTier, NetworkMode, SandboxSpec, Tunnel},
 };
 use tempfile::NamedTempFile;
 use tokio::{process::Command, time::timeout};
 
-use crate::{RuntimeCapabilities, RuntimeError, SandboxRuntime};
+use crate::{RuntimeCapabilities, RuntimeError, SandboxRuntime, tunnel::DockerTunnelManager};
 
 #[derive(Clone, Debug)]
 pub struct DockerRuntime {
     restricted_network: String,
+    tunnels: Option<DockerTunnelManager>,
     output_limit: usize,
 }
 
 impl DockerRuntime {
     #[must_use]
-    pub fn new(restricted_network: String, output_limit: usize) -> Self {
+    pub fn new(
+        restricted_network: String,
+        tunnel_config: TunnelConfig,
+        output_limit: usize,
+    ) -> Self {
         Self {
             restricted_network,
+            tunnels: DockerTunnelManager::new(tunnel_config),
             output_limit,
         }
     }
@@ -128,6 +135,7 @@ impl SandboxRuntime for DockerRuntime {
             name: "docker".into(),
             version: String::from_utf8_lossy(&output.stdout).trim().into(),
             tiers: vec![IsolationTier::Container],
+            supports_http_tunnels: self.tunnels.is_some(),
         })
     }
 
@@ -233,7 +241,26 @@ impl SandboxRuntime for DockerRuntime {
         })
     }
 
+    async fn expose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError> {
+        self.tunnels
+            .as_ref()
+            .ok_or(RuntimeError::TunnelsDisabled)?
+            .expose(id, tunnel)
+            .await
+    }
+
+    async fn unexpose(&self, id: SandboxId, tunnel: &Tunnel) -> Result<(), RuntimeError> {
+        self.tunnels
+            .as_ref()
+            .ok_or(RuntimeError::TunnelsDisabled)?
+            .unexpose(id, tunnel)
+            .await
+    }
+
     async fn delete(&self, id: SandboxId) -> Result<(), RuntimeError> {
+        if let Some(tunnels) = &self.tunnels {
+            tunnels.cleanup(id).await?;
+        }
         if !self.owned_exists(id).await? {
             return Ok(());
         }

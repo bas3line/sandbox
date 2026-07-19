@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AssignmentId, NodeId, OperationId, SandboxId,
     model::{
-        Assignment, CommandOutput, CommandSpec, NodeRecord, Operation, Sandbox, SandboxSpec,
-        SandboxState,
+        Assignment, CommandOutput, CommandSpec, ExposureProtocol, NodeRecord, Operation, Sandbox,
+        SandboxSpec, SandboxState, Tunnel,
     },
 };
 
@@ -22,6 +22,17 @@ pub struct HealthResponse {
     pub version: String,
     pub store: String,
     pub now: DateTime<Utc>,
+    #[serde(default)]
+    pub tunnels: TunnelCapabilities,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct TunnelCapabilities {
+    pub enabled: bool,
+    pub base_domain: Option<String>,
+    pub public_scheme: Option<String>,
+    #[serde(default)]
+    pub protocols: Vec<ExposureProtocol>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -38,6 +49,22 @@ pub struct CreateSandboxResponse {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ExecSandboxRequest {
     pub command: CommandSpec,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CreateTunnelRequest {
+    pub container_port: u16,
+    #[serde(default)]
+    pub protocol: ExposureProtocol,
+    pub subdomain: Option<String>,
+    #[serde(default)]
+    pub authenticated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TunnelOperationResponse {
+    pub tunnel: Tunnel,
+    pub operation: Operation,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,4 +114,9 @@ pub struct CompleteAssignmentRequest {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ListQuery {
     pub tenant: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TunnelAuthorizationQuery {
+    pub domain: String,
 }

@@ -35,6 +35,8 @@ For production, place the controller behind an OIDC/mTLS gateway that maps ident
 
 `deny` attaches no network. `restricted` attaches the configured worker network; the shipped Compose network is internal and therefore has no external egress. To allow selected destinations, attach a controlled egress proxy and enforce destinations outside the sandbox. `open` uses the Docker bridge and should be denied for sensitive tenants by organization policy.
 
+Public tunnels are an independent ingress choice. The Docker worker creates one internal network per tunneled sandbox and attaches only that sandbox and the edge. Routes use exact hostnames and are removed with the tunnel or sandbox. URLs are unauthenticated and Internet-facing; confidential/restricted workloads, raw TCP, and requested tunnel authentication are rejected. Put an identity-aware proxy in front if your deployment needs user authentication.
+
 ## Host hardening checklist
 
 - Dedicated worker hosts with minimal packages and automatic security updates.
@@ -54,6 +56,7 @@ For production, place the controller behind an OIDC/mTLS gateway that maps ident
 - No built-in secret broker, image signature verifier, or domain egress proxy.
 - PostgreSQL writes are not yet wrapped in one transaction/outbox.
 - Worker startup does not yet reconcile pre-existing runtime instances.
+- Public HTTP/WebSocket tunnels do not include built-in user authentication or abuse/rate limiting.
 
 Treat these as explicit engineering gates, not documentation footnotes.
 

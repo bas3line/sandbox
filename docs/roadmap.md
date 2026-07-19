@@ -10,7 +10,7 @@
 
 - Reference Firecracker jailer driver with snapshot pools and vsock agent.
 - gVisor/Kata drivers and capability probes.
-- Authenticated reverse tunnels, wildcard domains, TCP leases, and SSH certificates.
+- Identity-aware tunnel authentication, raw TCP leases, and SSH certificates.
 - Domain-aware egress proxy, DNS policy, image signatures, SBOM admission, and malware scanning.
 
 ## Execution

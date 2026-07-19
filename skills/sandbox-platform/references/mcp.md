@@ -31,16 +31,20 @@ Pi, Aider, CommandCode, and hosts without native MCP use the `sandbox` CLI with 
 | `sandbox_create` | Create with resources, policy signals, labels, and placement |
 | `sandbox_exec` | Execute argv; wait by default or return an operation |
 | `sandbox_list` | List visible sandboxes, optionally by tenant |
-| `sandbox_inspect` | Read one sandbox and its selected isolation |
+| `sandbox_inspect` | Read one sandbox, selected isolation, and tunnels |
+| `sandbox_tunnel_create` | Publish one HTTP/WebSocket port and wait by default |
+| `sandbox_tunnel_delete` | Remove a public route and wait by default |
 | `sandbox_delete` | Remove runtime resources; wait by default |
 | `sandbox_operation` | Read one asynchronous operation snapshot |
 | `sandbox_wait` | Poll an operation with a bounded timeout |
 | `sandbox_agent_list` | Discover built-in coding-agent profiles |
 | `sandbox_agent_run` | Create from a coding-agent profile |
 
-For `sandbox_create`, supply `tenant` and `image`. Optional fields cover startup `command`, non-secret `env`, CPU, memory, disk, PIDs, TTL, network, isolation, sensitivity, risk signals, labels, required worker labels, preferred region, and anti-affinity keys.
+For `sandbox_create`, supply `tenant` and `image`. Optional fields cover startup `command`, non-secret `env`, CPU, memory, disk, PIDs, TTL, network, isolation, sensitivity, risk signals, labels, required worker labels, preferred region, anti-affinity keys, and HTTP/WebSocket `exposures`.
 
 For `sandbox_exec`, supply `sandbox_id` and `argv`. Optional fields are `cwd`, non-secret `env`, `timeout_seconds`, and `wait`.
+
+For `sandbox_tunnel_create`, supply `sandbox_id` and `container_port`; optionally request a lowercase `subdomain`. The service must listen on `0.0.0.0`. Treat the returned URL as Internet-facing and delete it when no longer required.
 
 ## Resources
 

@@ -5,11 +5,11 @@ use chrono::{Duration, Utc};
 use sandbox_core::{
     AssignmentId, NodeId, OperationId, SandboxId,
     api::{CompleteAssignmentRequest, HeartbeatRequest},
-    model::{Assignment, AssignmentState, NodeRecord, Operation, OperationState, Sandbox},
+    model::{Assignment, AssignmentState, NodeRecord, Operation, OperationState, Sandbox, Tunnel},
 };
 use tokio::sync::RwLock;
 
-use crate::{Store, StoreError, StoreResult};
+use crate::{Store, StoreError, StoreResult, apply_tunnel_completion};
 
 #[derive(Default)]
 struct State {
@@ -101,6 +101,21 @@ impl Store for MemoryStore {
         Ok(result)
     }
 
+    async fn find_tunnel_by_hostname(&self, hostname: &str) -> StoreResult<Option<Tunnel>> {
+        Ok(self
+            .state
+            .read()
+            .await
+            .sandboxes
+            .values()
+            .flat_map(|sandbox| sandbox.tunnels.iter())
+            .find(|tunnel| {
+                tunnel.hostname == hostname
+                    && tunnel.state == sandbox_core::model::TunnelState::Active
+            })
+            .cloned())
+    }
+
     async fn create_assignment(
         &self,
         assignment: Assignment,
@@ -173,6 +188,7 @@ impl Store for MemoryStore {
                 "assignment completion identifiers do not match".into(),
             ));
         }
+        let assignment_kind = assignment.kind.clone();
         assignment.state = if request.success {
             AssignmentState::Completed
         } else {
@@ -196,6 +212,12 @@ impl Store for MemoryStore {
             .sandboxes
             .get_mut(&request.sandbox_id)
             .ok_or_else(|| StoreError::NotFound(format!("sandbox {}", request.sandbox_id)))?;
+        apply_tunnel_completion(
+            sandbox,
+            &assignment_kind,
+            request.success,
+            request.error.as_deref(),
+        );
         sandbox.state = request.sandbox_state;
         sandbox.failure = request.error;
         sandbox.updated_at = now;

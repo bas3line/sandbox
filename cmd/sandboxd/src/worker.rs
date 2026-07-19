@@ -25,8 +25,8 @@ struct WorkerState {
 }
 
 pub async fn run(config: Arc<SandboxConfig>, cancel: CancellationToken) -> Result<()> {
-    let runtime =
-        from_config(&config.node, config.policy.max_output_bytes).context("configure runtime")?;
+    let runtime = from_config(&config.node, &config.tunnel, config.policy.max_output_bytes)
+        .context("configure runtime")?;
     let capabilities = runtime.probe().await.context("probe sandbox runtime")?;
     info!(runtime = %capabilities.name, version = %capabilities.version, "worker runtime ready");
     let node_id = load_or_create_node_id(Path::new(&config.node.state_dir)).await?;
@@ -38,7 +38,12 @@ pub async fn run(config: Arc<SandboxConfig>, cancel: CancellationToken) -> Resul
         allocations: Mutex::new(HashMap::new()),
         sandbox_locks: Mutex::new(HashMap::new()),
     });
-    let node = node_record(&config, node_id, BTreeSet::from_iter(capabilities.tiers));
+    let node = node_record(
+        &config,
+        node_id,
+        BTreeSet::from_iter(capabilities.tiers),
+        capabilities.supports_http_tunnels,
+    );
     register_with_retry(&client, node, &cancel).await?;
     let concurrency = Arc::new(Semaphore::new(16));
     let mut heartbeat_tick = tokio::time::interval(Duration::from_secs(
@@ -114,8 +119,11 @@ async fn process_assignment(
     let _sandbox_guard = lock.lock().await;
     let sandbox_id = assignment.sandbox_id;
     let result = match &assignment.kind {
-        AssignmentKind::Create { spec, isolation } => runtime
-            .create(sandbox_id, spec, *isolation)
+        AssignmentKind::Create {
+            spec,
+            isolation,
+            tunnels,
+        } => create_with_tunnels(runtime.as_ref(), sandbox_id, spec, *isolation, tunnels)
             .await
             .map(|()| {
                 let resources = spec.resources.clone();
@@ -125,6 +133,14 @@ async fn process_assignment(
             let success = output.exit_code == 0;
             (SandboxState::Running, Some((output, success)), None)
         }),
+        AssignmentKind::Expose { tunnel } => runtime
+            .expose(sandbox_id, tunnel)
+            .await
+            .map(|()| (SandboxState::Running, None, None)),
+        AssignmentKind::Unexpose { tunnel } => runtime
+            .unexpose(sandbox_id, tunnel)
+            .await
+            .map(|()| (SandboxState::Running, None, None)),
         AssignmentKind::Delete => runtime
             .delete(sandbox_id)
             .await
@@ -161,7 +177,9 @@ async fn process_assignment(
             sandbox_id,
             success: false,
             sandbox_state: match assignment.kind {
-                AssignmentKind::Exec { .. } => SandboxState::Running,
+                AssignmentKind::Exec { .. }
+                | AssignmentKind::Expose { .. }
+                | AssignmentKind::Unexpose { .. } => SandboxState::Running,
                 _ => SandboxState::Failed,
             },
             output: None,
@@ -178,6 +196,7 @@ fn node_record(
     config: &SandboxConfig,
     id: NodeId,
     supported_tiers: BTreeSet<sandbox_core::model::IsolationTier>,
+    supports_http_tunnels: bool,
 ) -> NodeRecord {
     NodeRecord {
         id,
@@ -195,8 +214,31 @@ fn node_record(
         warm_images: BTreeSet::new(),
         pressure: 0.0,
         draining: false,
+        supports_http_tunnels,
         last_seen: Utc::now(),
     }
+}
+
+async fn create_with_tunnels(
+    runtime: &dyn sandbox_runtime::SandboxRuntime,
+    sandbox_id: SandboxId,
+    spec: &sandbox_core::model::SandboxSpec,
+    isolation: sandbox_core::model::IsolationTier,
+    tunnels: &[sandbox_core::model::Tunnel],
+) -> Result<(), sandbox_runtime::RuntimeError> {
+    runtime.create(sandbox_id, spec, isolation).await?;
+    let mut exposed = Vec::new();
+    for tunnel in tunnels {
+        if let Err(error) = runtime.expose(sandbox_id, tunnel).await {
+            for exposed_tunnel in exposed.iter().rev() {
+                let _cleanup = runtime.unexpose(sandbox_id, exposed_tunnel).await;
+            }
+            let _cleanup = runtime.delete(sandbox_id).await;
+            return Err(error);
+        }
+        exposed.push(tunnel.clone());
+    }
+    Ok(())
 }
 
 async fn heartbeat(config: &SandboxConfig, state: &WorkerState) -> HeartbeatRequest {

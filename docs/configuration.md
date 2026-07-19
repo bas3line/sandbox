@@ -69,3 +69,15 @@ Changing the microVM threshold is a security-policy change. Review it like a fir
 | `node.labels` | empty | Hard placement labels |
 
 Advertise allocatable capacity after system and runtime reserves, not raw host capacity.
+
+## Public tunnels
+
+Tunnels are disabled by default. Both controller and workers need the same `tunnel.base_domain` and `tunnel.public_scheme`; Docker workers also reconcile the edge route directory and private per-sandbox networks.
+
+```text
+SANDBOX__TUNNEL__ENABLED=true
+SANDBOX__TUNNEL__BASE_DOMAIN=tunnel.example.com
+SANDBOX__TUNNEL__PUBLIC_SCHEME=https
+```
+
+See [tunnels.md](tunnels.md) for every key, wildcard DNS, direct Traefik, Caddy on-demand TLS, lifecycle behavior, and troubleshooting.
