@@ -37,6 +37,7 @@ http = "1.4.2"
 openssl-sys = { version = "0.9.117", features = ["vendored"] }
 pq-sys = { version = "0.7.5", features = ["bundled"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+rustls = { version = "0.23.42", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

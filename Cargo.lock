@@ -2088,6 +2088,7 @@ dependencies = [
  "futures-util",
  "http",
  "reqwest",
+ "rustls",
  "sandbox-client",
  "sandbox-core",
  "secrecy",

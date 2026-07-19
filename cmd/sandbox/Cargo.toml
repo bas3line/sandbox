@@ -19,6 +19,7 @@ clap.workspace = true
 futures-util.workspace = true
 http.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 sandbox-client.workspace = true
 sandbox-core.workspace = true
 secrecy.workspace = true

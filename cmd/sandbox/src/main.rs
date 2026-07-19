@@ -208,6 +208,9 @@ enum SensitivityArg {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Reqwest and the WebSocket relay share rustls. Select one process-wide
+    // provider explicitly so release builds never depend on feature inference.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = Cli::parse();
     let client = SandboxClient::new(
         cli.server.clone(),
