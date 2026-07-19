@@ -207,10 +207,13 @@ async fn process_assignment(
     // capacity before it is reported ready.
     if capacity_changed {
         let heartbeat = heartbeat(config, &state).await;
-        client
-            .heartbeat(node_id, &heartbeat)
-            .await
-            .context("publish capacity after assignment")?;
+        if let Err(error) = client.heartbeat(node_id, &heartbeat).await {
+            // Capacity publication narrows the delete-to-create scheduling
+            // race, but assignment completion is authoritative. A transient
+            // heartbeat failure must not strand completed work in Leased and
+            // cause the controller to retry an already-applied operation.
+            warn!(%error, "capacity heartbeat failed; reporting assignment completion anyway");
+        }
     }
     client
         .complete_assignment(&request)

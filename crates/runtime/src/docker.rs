@@ -421,15 +421,22 @@ impl SandboxRuntime for DockerRuntime {
         if let Some(tunnels) = &self.tunnels {
             tunnels.cleanup(id).await?;
         }
-        if self.owned_exists(id).await? {
-            self.checked(
-                &["rm".into(), "--force".into(), Self::name(id)],
-                "rm --force",
-            )
-            .await?;
+        let container_result: Result<(), RuntimeError> = async {
+            if self.owned_exists(id).await? {
+                self.checked(
+                    &["rm".into(), "--force".into(), Self::name(id)],
+                    "rm --force",
+                )
+                .await?;
+            }
+            Ok(())
         }
-        self.delete_workspace_volume(id).await?;
-        Ok(())
+        .await;
+        // Always attempt volume cleanup. In particular, do not orphan the
+        // per-sandbox workspace when container inspection or removal fails.
+        let volume_result = self.delete_workspace_volume(id).await;
+        container_result?;
+        volume_result
     }
 }
 

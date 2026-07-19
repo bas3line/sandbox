@@ -411,6 +411,7 @@ async fn run(cli: Cli) -> Result<()> {
                 if operation.state == OperationState::Failed {
                     render_operation(&operation, cli.json)?;
                 }
+                ensure_lifecycle_operation_succeeded(&operation)?;
                 let sandbox = client.get_sandbox(response.sandbox.id).await?;
                 if cli.json {
                     print_json(&serde_json::json!({
@@ -505,6 +506,7 @@ async fn run(cli: Cli) -> Result<()> {
             } else {
                 let completed = wait_for(&client, operation.id, 120).await?;
                 render_operation(&completed, cli.json)?;
+                ensure_lifecycle_operation_succeeded(&completed)?;
             }
         }
         Commands::Wait { id, timeout } => {
@@ -693,6 +695,7 @@ async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool)
             if operation.state == OperationState::Failed {
                 render_operation(&operation, json)?;
             }
+            ensure_lifecycle_operation_succeeded(&operation)?;
             let sandbox = client.get_sandbox(id).await?;
             let tunnel = sandbox
                 .tunnels
@@ -739,6 +742,7 @@ async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool)
             } else {
                 let operation = wait_for(client, response.operation.id, 120).await?;
                 render_operation(&operation, json)?;
+                ensure_lifecycle_operation_succeeded(&operation)?;
             }
         }
     }
@@ -793,6 +797,7 @@ async fn run_agent(command: AgentCommands, client: &SandboxClient, json: bool) -
             if create_operation.state == OperationState::Failed {
                 render_operation(&create_operation, json)?;
             }
+            ensure_lifecycle_operation_succeeded(&create_operation)?;
             let sandbox = client.get_sandbox(response.sandbox.id).await?;
 
             // No extra arguments means "provision an agent-ready sandbox". An
@@ -923,6 +928,13 @@ fn render_operation(operation: &Operation, json: bool) -> Result<()> {
     // include structured output. Let exec/wait propagate that exact exit code;
     // lifecycle failures have no command output and remain regular CLI errors.
     if operation.state == OperationState::Failed && operation.output.is_none() {
+        bail!("operation {} failed", operation.id);
+    }
+    Ok(())
+}
+
+fn ensure_lifecycle_operation_succeeded(operation: &Operation) -> Result<()> {
+    if operation.state == OperationState::Failed {
         bail!("operation {} failed", operation.id);
     }
     Ok(())
@@ -1090,6 +1102,26 @@ mod tests {
             panic!("expected delete command");
         };
         assert!(!no_wait);
+    }
+
+    #[test]
+    fn lifecycle_failure_is_an_error_even_when_output_is_attached() {
+        let operation = Operation {
+            id: OperationId::new(),
+            sandbox_id: SandboxId::new(),
+            state: OperationState::Failed,
+            output: Some(sandbox_core::model::CommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "creation failed".into(),
+                truncated: false,
+            }),
+            error: Some("runtime rejected the sandbox".into()),
+            created_at: "2026-07-20T00:00:00Z".parse().expect("valid timestamp"),
+            updated_at: "2026-07-20T00:00:01Z".parse().expect("valid timestamp"),
+        };
+
+        assert!(ensure_lifecycle_operation_succeeded(&operation).is_err());
     }
 
     #[test]
