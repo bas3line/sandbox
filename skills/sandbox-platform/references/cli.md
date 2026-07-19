@@ -62,10 +62,13 @@ sandbox delete "$SANDBOX_ID" --wait
 Make the intended HTTP/WebSocket service listen on `0.0.0.0`, then:
 
 ```sh
+sandbox http 3000
 sandbox tunnel create "$SANDBOX_ID" --port 3000
 sandbox tunnel list "$SANDBOX_ID"
 sandbox tunnel delete "$SANDBOX_ID" "$TUNNEL_ID"
 ```
+
+`sandbox http PORT` uses `SANDBOX_ID`/`--sandbox`, or the tenant's only running sandbox when unambiguous. It is capability-gated by the server and reuses an active URL for the same port. Use `sandbox http PORT --subdomain NAME` only for a stable public label.
 
 Use `--subdomain review-42` only when the caller needs a stable human-readable label. Every returned URL is public. Do not expose admin interfaces or services containing credentials.
 

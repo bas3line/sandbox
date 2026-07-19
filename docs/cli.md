@@ -62,11 +62,16 @@ Deletion removes runtime resources. The stopped control-plane record remains for
 The service must bind `0.0.0.0` inside the sandbox. Then create, inspect, and remove its public route:
 
 ```sh
+sandbox http 3000
 sandbox tunnel create "$ID" --port 3000
 sandbox tunnel create "$ID" --port 8080 --subdomain review-42
 sandbox tunnel list "$ID"
 sandbox tunnel delete "$ID" "$TUNNEL_ID"
 ```
+
+`sandbox http PORT` is the fast sharing path for a frontend or API. It uses `SANDBOX_ID` (or `--sandbox ID`) when set; otherwise it selects the tenant's only running sandbox. It fails rather than guessing when multiple sandboxes are running. Use `--tenant` to change the automatic-selection tenant and `--subdomain` for a stable label.
+
+The shortcut first checks `/healthz` and is unavailable unless the server advertises enabled HTTP public URLs. If the selected port already has an active tunnel, it prints the existing URL instead of creating a duplicate. The server still enforces sensitivity, worker capability, tunnel count, and protocol policy.
 
 Tunnel mutations wait by default; pass `--no-wait` to manage the operation separately. Treat every printed URL as public. See [tunnels.md](tunnels.md).
 

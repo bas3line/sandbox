@@ -9,10 +9,11 @@ use sandbox_client::SandboxClient;
 use sandbox_core::{
     OperationId, SandboxId, TunnelId,
     agent::{built_in_agent_profiles, find_agent_profile},
-    api::{CreateTunnelRequest, ExecSandboxRequest},
+    api::{CreateTunnelRequest, ExecSandboxRequest, TunnelCapabilities},
     model::{
         CommandSpec, DataSensitivity, ExposureProtocol, IsolationPreference, NetworkMode,
-        Operation, OperationState, PortExposure, ResourceSpec, SandboxSpec, WorkloadSignals,
+        Operation, OperationState, PortExposure, ResourceSpec, Sandbox, SandboxSpec, SandboxState,
+        TunnelState, WorkloadSignals,
     },
 };
 use secrecy::SecretString;
@@ -68,6 +69,8 @@ enum Commands {
         #[command(subcommand)]
         command: TunnelCommands,
     },
+    /// Share an HTTP service from the linked or only running sandbox.
+    Http(HttpArgs),
     /// Print MCP client configuration for sandbox-mcp.
     McpConfig,
 }
@@ -122,6 +125,25 @@ struct ExecArgs {
     no_wait: bool,
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     argv: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct HttpArgs {
+    /// HTTP service port inside the sandbox.
+    #[arg(value_parser = parse_port)]
+    port: u16,
+    /// Sandbox to share. Defaults to SANDBOX_ID or the tenant's only running sandbox.
+    #[arg(long = "sandbox", env = "SANDBOX_ID")]
+    sandbox: Option<SandboxId>,
+    /// Tenant used when automatically selecting the only running sandbox.
+    #[arg(long, env = "SANDBOX_TENANT", default_value = "default")]
+    tenant: String,
+    /// Optional stable public subdomain.
+    #[arg(long)]
+    subdomain: Option<String>,
+    /// Return before the public route is active.
+    #[arg(long)]
+    no_wait: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -305,6 +327,7 @@ async fn main() -> Result<()> {
         }
         Commands::Agent { command } => run_agent(command, &client, cli.json).await?,
         Commands::Tunnel { command } => run_tunnel(command, &client, cli.json).await?,
+        Commands::Http(args) => run_http(args, &client, cli.json).await?,
         Commands::McpConfig => {
             print_json(
                 &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":cli.server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
@@ -312,6 +335,127 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn run_http(args: HttpArgs, client: &SandboxClient, json: bool) -> Result<()> {
+    let health = client
+        .health()
+        .await
+        .context("check whether this Sandbox server supports public URLs")?;
+    validate_http_capabilities(&health.tunnels)?;
+
+    let sandbox = match args.sandbox {
+        Some(id) => client.get_sandbox(id).await?,
+        None => {
+            let sandboxes = client.list_sandboxes(Some(&args.tenant)).await?;
+            let id = select_only_running_sandbox(&sandboxes, &args.tenant)?;
+            client.get_sandbox(id).await?
+        }
+    };
+    if sandbox.state != SandboxState::Running {
+        bail!(
+            "sandbox {} is {}; HTTP sharing requires a running sandbox",
+            sandbox.id,
+            format!("{:?}", sandbox.state).to_lowercase()
+        );
+    }
+
+    if let Some(tunnel) = sandbox
+        .tunnels
+        .iter()
+        .find(|tunnel| tunnel.container_port == args.port)
+    {
+        if tunnel.state == TunnelState::Active {
+            if let Some(requested) = args.subdomain.as_deref()
+                && requested != tunnel.subdomain
+            {
+                bail!(
+                    "port {} is already shared at {}; remove tunnel {} before changing its subdomain to {requested:?}",
+                    args.port,
+                    tunnel.public_url,
+                    tunnel.id
+                );
+            }
+            if json {
+                print_json(&serde_json::json!({
+                    "tunnel": tunnel,
+                    "operation": null,
+                    "reused": true,
+                }))?;
+            } else {
+                println!("{}", tunnel.public_url);
+            }
+            return Ok(());
+        }
+        bail!(
+            "port {} already has tunnel {} in {} state; inspect it with `sandbox tunnel list {}`",
+            args.port,
+            tunnel.id,
+            format!("{:?}", tunnel.state).to_lowercase(),
+            sandbox.id
+        );
+    }
+
+    run_tunnel(
+        TunnelCommands::Create {
+            id: sandbox.id,
+            port: args.port,
+            subdomain: args.subdomain,
+            no_wait: args.no_wait,
+        },
+        client,
+        json,
+    )
+    .await
+}
+
+fn validate_http_capabilities(capabilities: &TunnelCapabilities) -> Result<()> {
+    if !capabilities.enabled {
+        bail!(
+            "public URL sharing is disabled on this Sandbox server; ask the operator to enable public tunnels"
+        );
+    }
+    if !capabilities.protocols.contains(&ExposureProtocol::Http) {
+        bail!("this Sandbox server does not advertise HTTP public URLs");
+    }
+    if capabilities
+        .base_domain
+        .as_deref()
+        .is_none_or(str::is_empty)
+        || capabilities
+            .public_scheme
+            .as_deref()
+            .is_none_or(str::is_empty)
+    {
+        bail!("public URL sharing is enabled but incomplete on this Sandbox server");
+    }
+    Ok(())
+}
+
+fn select_only_running_sandbox(sandboxes: &[Sandbox], tenant: &str) -> Result<SandboxId> {
+    select_only_sandbox_id(
+        sandboxes
+            .iter()
+            .filter(|sandbox| sandbox.state == SandboxState::Running)
+            .map(|sandbox| sandbox.id),
+        tenant,
+    )
+}
+
+fn select_only_sandbox_id(
+    mut running: impl Iterator<Item = SandboxId>,
+    tenant: &str,
+) -> Result<SandboxId> {
+    let first = running.next();
+    match (first, running.next()) {
+        (Some(id), None) => Ok(id),
+        (None, _) => bail!(
+            "no running sandbox found for tenant {tenant:?}; set SANDBOX_ID or pass --sandbox"
+        ),
+        (Some(_), Some(_)) => bail!(
+            "multiple running sandboxes found for tenant {tenant:?}; set SANDBOX_ID or pass --sandbox"
+        ),
+    }
 }
 
 fn create_spec(args: CreateArgs) -> SandboxSpec {
@@ -555,4 +699,65 @@ fn parse_exposure(value: &str) -> Result<PortExposure, String> {
     };
     exposure.validate().map_err(|error| error.to_string())?;
     Ok(exposure)
+}
+
+fn parse_port(value: &str) -> Result<u16, String> {
+    let port = value
+        .parse::<u16>()
+        .map_err(|_| "port must be between 1 and 65535".to_owned())?;
+    if port == 0 {
+        return Err("port must be between 1 and 65535".into());
+    }
+    Ok(port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_http_shortcut() {
+        let cli =
+            Cli::try_parse_from(["sandbox", "http", "3000"]).expect("parse sandbox http shortcut");
+        let Commands::Http(args) = cli.command else {
+            panic!("expected HTTP command");
+        };
+        assert_eq!(args.port, 3000);
+        assert_eq!(args.tenant, "default");
+        assert!(args.sandbox.is_none());
+    }
+
+    #[test]
+    fn http_shortcut_rejects_port_zero() {
+        assert!(Cli::try_parse_from(["sandbox", "http", "0"]).is_err());
+    }
+
+    #[test]
+    fn http_shortcut_requires_enabled_server_capability() {
+        let disabled = TunnelCapabilities::default();
+        assert!(validate_http_capabilities(&disabled).is_err());
+
+        let enabled = TunnelCapabilities {
+            enabled: true,
+            base_domain: Some("tunnel.example.com".into()),
+            public_scheme: Some("https".into()),
+            protocols: vec![ExposureProtocol::Http],
+        };
+        assert!(validate_http_capabilities(&enabled).is_ok());
+    }
+
+    #[test]
+    fn automatic_http_target_must_be_unambiguous() {
+        let only = SandboxId::new();
+        assert_eq!(
+            select_only_sandbox_id([only].into_iter(), "default")
+                .expect("select only running sandbox"),
+            only
+        );
+        assert!(select_only_sandbox_id([].into_iter(), "default").is_err());
+        assert!(
+            select_only_sandbox_id([SandboxId::new(), SandboxId::new()].into_iter(), "default")
+                .is_err()
+        );
+    }
 }

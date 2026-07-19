@@ -62,6 +62,7 @@ sandbox create --tenant platform --image ubuntu:24.04 \
   --network restricted --untrusted-repo --generated-code
 
 sandbox exec 019f... -- cargo test --workspace
+sandbox http 3000
 sandbox tunnel create 019f... --port 3000
 sandbox agent run codex --tenant platform
 sandbox delete 019f... --wait
