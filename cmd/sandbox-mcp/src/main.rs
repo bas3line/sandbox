@@ -367,8 +367,8 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "sandbox_agent_run",
-            "title": "Run coding agent",
-            "description": "Create a risk-scored sandbox using a Codex, Claude Code, OpenCode, Pi, Aider, Goose, or CommandCode profile.",
+            "title": "Provision or run coding agent",
+            "description": "Create a risk-scored agent sandbox, wait by default, and optionally execute observable non-interactive agent arguments.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
@@ -377,7 +377,10 @@ fn tool_definitions() -> Vec<Value> {
                     "tenant": {"type": "string", "minLength": 1},
                     "image": {"type": "string", "minLength": 1, "description": "Optional profile image override."},
                     "args": {"type": "array", "items": {"type": "string"}},
-                    "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 604800, "default": 3600}
+                    "network": {"type": "string", "enum": ["deny", "restricted", "open"], "default": "restricted"},
+                    "ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 604800, "default": 3600},
+                    "command_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 900},
+                    "wait": {"type": "boolean", "default": true}
                 },
                 "required": ["agent", "tenant"]
             },
@@ -547,17 +550,87 @@ async fn call_tool(client: &SandboxClient, name: &str, arguments: Value) -> Resu
             let profile = find_agent_profile(&agent)
                 .ok_or_else(|| anyhow!("unknown agent profile: {agent}"))?;
             let args = string_array_arg(&arguments, "args", false)?.unwrap_or_default();
+            let execute_agent = !args.is_empty();
+            let image = optional_string_arg(&arguments, "image")?
+                .or_else(|| profile.default_image.clone())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "agent {agent} has no bundled image; provide an approved immutable image"
+                    )
+                })?;
+            let agent_argv = profile.command_argv(args);
             let mut spec = profile.sandbox_spec(
                 tenant,
-                args,
+                image,
                 u64::from(integer_arg(&arguments, "ttl_seconds", 3_600)?),
             );
-            if let Some(image) = optional_string_arg(&arguments, "image")? {
-                spec.image = image;
+            spec.network = match arguments
+                .get("network")
+                .and_then(Value::as_str)
+                .unwrap_or("restricted")
+            {
+                "deny" => NetworkMode::Deny,
+                "restricted" => NetworkMode::RestrictedEgress,
+                "open" => NetworkMode::OpenEgress,
+                _ => return Err(anyhow!("network must be deny, restricted, or open")),
+            };
+            let wait = bool_arg(&arguments, "wait", true)?;
+            if !wait && execute_agent {
+                return Err(anyhow!(
+                    "wait=false cannot be combined with agent arguments; provision first, then call sandbox_exec"
+                ));
             }
-            Ok(ToolOutcome::success(serde_json::to_value(
-                client.create_sandbox(spec).await?,
-            )?))
+            let response = client.create_sandbox(spec).await?;
+            if !wait {
+                return Ok(ToolOutcome::success(json!({
+                    "sandbox": response.sandbox,
+                    "operation": response.operation,
+                    "agent_command": agent_argv,
+                })));
+            }
+            let create_operation = wait_for(client, response.operation.id, 300).await?;
+            let sandbox = client.get_sandbox(response.sandbox.id).await?;
+            if create_operation.state == OperationState::Failed || !execute_agent {
+                let is_error = create_operation.state == OperationState::Failed;
+                return Ok(ToolOutcome {
+                    value: json!({
+                        "sandbox": sandbox,
+                        "create_operation": create_operation,
+                        "agent_command": if execute_agent { json!(agent_argv) } else { Value::Null },
+                    }),
+                    is_error,
+                });
+            }
+            let command_timeout =
+                u64::from(integer_arg(&arguments, "command_timeout_seconds", 900)?);
+            let operation = client
+                .exec(
+                    sandbox.id,
+                    ExecSandboxRequest {
+                        command: CommandSpec {
+                            argv: agent_argv,
+                            cwd: Some("/workspace".into()),
+                            env: BTreeMap::new(),
+                            timeout_seconds: command_timeout,
+                        },
+                    },
+                )
+                .await?;
+            let agent_operation =
+                wait_for(client, operation.id, command_timeout.saturating_add(30)).await?;
+            let is_error = agent_operation.state == OperationState::Failed
+                || agent_operation
+                    .output
+                    .as_ref()
+                    .is_some_and(|output| output.exit_code != 0);
+            Ok(ToolOutcome {
+                value: json!({
+                    "sandbox": sandbox,
+                    "create_operation": create_operation,
+                    "agent_operation": agent_operation,
+                }),
+                is_error,
+            })
         }
         _ => Err(anyhow!("unknown tool: {name}")),
     }

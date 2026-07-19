@@ -12,7 +12,7 @@ Sandbox profiles encode sane resource, network, sensitivity, and risk signals fo
 | Pi | `pi` | Local pinned image builder |
 | Aider | `aider` | Official `paulgauthier/aider` image |
 | Goose | `goose` | Official `ghcr.io/block/goose` image |
-| CommandCode | `commandcode` | Organization-provided local image |
+| CommandCode | `commandcode` | Required `--image` override |
 
 Image versions for npm-based agents live in `images/agents/versions.env` and should be updated by a reviewed dependency PR.
 
@@ -26,6 +26,24 @@ Image versions for npm-based agents live in `images/agents/versions.env` and sho
 ```
 
 The common image uses Node 24, installs Git/OpenSSH/ripgrep, installs the exact agent version under `/opt/agent`, and runs as UID 10001. Pin the base image digest and publish signed images to an enterprise registry before production.
+
+Build local images on every worker that can receive agent workloads. If a `:local` image is absent, the operation fails with the exact worker-side build command instead of a generic Docker image error.
+
+## Run profiles
+
+```sh
+sandbox agent list
+sandbox agent run codex --tenant engineering
+sandbox agent run opencode --tenant engineering -- --version
+sandbox agent run commandcode --tenant engineering \
+  --image registry.example.com/commandcode@sha256:... -- --version
+```
+
+Without arguments after `--`, `agent run` provisions the workspace and prints the next `sandbox exec` command. With arguments, the CLI waits for creation and runs the agent as a normal exec operation so output, exit code, timeout, and truncation remain observable. The sandbox is retained for follow-up commands until deletion or TTL expiry.
+
+Agent containers keep a read-only root filesystem. Each sandbox receives a writable, sandbox-scoped `/workspace` volume; `HOME` and XDG state live below that mount. Deletion removes both the container and its workspace volume.
+
+Profiles default to restricted egress. Select `--network open` only when the agent needs an external model provider or package endpoint that the restricted worker network cannot reach.
 
 ## Repositories
 
@@ -44,4 +62,4 @@ Agent providers need credentials, but the base API intentionally has no plaintex
 
 ## Non-interactive behavior
 
-The current execution path captures stdout/stderr and does not allocate a PTY. Use agent non-interactive modes where available. Interactive terminal streaming, resumable sessions, and session recording are roadmap work.
+The execution path captures stdout/stderr and does not allocate a PTY. Use agent non-interactive modes where available. Interactive terminal streaming, resumable sessions, and session recording are roadmap work.

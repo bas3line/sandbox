@@ -229,7 +229,7 @@ Every tool returns a text content block, object-shaped `structuredContent`, and 
 | `sandbox_operation` | Reads one create, exec, or delete operation | Read-only |
 | `sandbox_wait` | Waits for an operation to succeed, fail, or time out | Read-only |
 | `sandbox_agent_list` | Lists the seven built-in coding-agent profiles | Read-only |
-| `sandbox_agent_run` | Creates a sandbox from an agent profile | Creates resources |
+| `sandbox_agent_run` | Provisions an agent workspace and optionally runs observable non-interactive arguments | Creates resources and can execute code |
 
 ### Complete create inputs
 
@@ -252,6 +252,8 @@ Create always returns a sandbox record and an operation. Exec, tunnel mutations,
 3. Treat `state: failed` as a lifecycle failure.
 4. Treat a non-zero command `exit_code` as a tool error even when transport succeeded.
 5. Check `truncated` before assuming stdout or stderr is complete.
+
+`sandbox_agent_run` waits by default. With no `args`, it provisions an agent-ready workspace. With `args`, it runs the profile executable through the same observable exec operation and returns `agent_operation`. `wait: false` is available only when no agent arguments were supplied; follow it with `sandbox_wait` and `sandbox_exec`.
 
 ## Resources
 

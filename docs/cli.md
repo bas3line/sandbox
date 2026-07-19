@@ -3,12 +3,15 @@
 ## Connection
 
 ```sh
-export SANDBOX_URL=https://sandbox.example.com
+sandbox config set-server https://sandbox.example.com
 export SANDBOX_TOKEN='redacted'
 sandbox doctor
+sandbox config show
 ```
 
-`--json` is global and intended for automation. Tokens are accepted from the environment with values hidden by Clap diagnostics.
+The saved configuration contains only the controller URL. Keep the token in your shell, service manager, or secret store; the CLI never writes it to the config file. `--server` and `SANDBOX_URL` override the saved URL, in that order.
+
+`--server`, `--token`, and `--json` are global options and work before or after a subcommand. Put them before the final `--` that separates agent or exec arguments. `--json` is intended for automation. Token values are hidden by Clap diagnostics.
 
 ## Create
 
@@ -29,7 +32,7 @@ sandbox create \
   --needs-secrets
 ```
 
-Add repeatable `--expose PORT` or `--expose PORT=SUBDOMAIN` flags to allocate public HTTP/WebSocket URLs during creation. Tunnels must be enabled by the deployment.
+Create waits for the sandbox to become ready and prints its ID, state, selected node, isolation, and expiry. Pass `--no-wait` only when a caller will track the returned operation ID. Add repeatable `--expose PORT` or `--expose PORT=SUBDOMAIN` flags to allocate public HTTP/WebSocket URLs during creation. Tunnels must be enabled by the deployment.
 
 Pass an optional detached startup command after `--`. Prefer creating the sandbox first and using `sandbox exec` so operation output is visible.
 
@@ -51,11 +54,12 @@ sandbox wait "$OPERATION_ID" --timeout 900
 
 ```sh
 sandbox list --tenant engineering
+sandbox list --tenant engineering --all
 sandbox inspect "$ID"
-sandbox delete "$ID" --wait
+sandbox delete "$ID"
 ```
 
-Deletion removes runtime resources. The stopped control-plane record remains for audit.
+Normal list output shows active records. `--all` includes stopped and failed audit records. Deletion waits for cleanup by default; `--no-wait` returns the operation ID immediately. Runtime resources, including the sandbox workspace volume, are removed while the stopped control-plane record remains for audit.
 
 ## Share a local service
 
@@ -87,11 +91,29 @@ Controller-managed tunnel mutations wait by default; pass `--no-wait` to manage 
 ```sh
 sandbox agent list
 sandbox agent run codex --tenant engineering
-sandbox agent run opencode --tenant engineering --image registry.example.com/opencode@sha256:...
+sandbox agent run opencode --tenant engineering -- --version
+sandbox agent run opencode --tenant engineering \
+  --image registry.example.com/opencode@sha256:... -- --version
 ```
+
+Running a profile without agent arguments provisions an agent-ready sandbox and prints the next `sandbox exec` command. Arguments after `--` run through the observable exec path, so stdout, stderr, timeout, and exit status are preserved. The agent sandbox remains available until deletion or TTL expiry. Use `--network open` only when the agent must contact an external model API; the default is restricted egress.
+
+Codex, Claude Code, OpenCode, and Pi use local worker images. Build them on every eligible worker with `./scripts/build-agent-image.sh NAME`, or pass an immutable registry image. CommandCode always requires `--image` because no public default image is assumed.
 
 See [agents.md](agents.md) before supplying credentials or custom images.
 
 ## Exit behavior
 
 Connection and API errors produce a non-zero CLI exit. A waited remote command exits the local CLI with the bounded remote exit code. JSON output does not include bearer tokens.
+
+## Deployment smoke test
+
+Run the destructive, self-cleaning command-surface check against a test controller before a release:
+
+```sh
+SANDBOX_URL=https://sandbox.example.com \
+SANDBOX_TOKEN='read-from-your-secret-store' \
+./scripts/smoke-test-cli.sh
+```
+
+Set `SANDBOX_CLI=/path/to/sandbox` to test an unpacked binary. The script uses the isolated `sandbox-cli-smoke` tenant, creates a short-lived Python sandbox, verifies synchronous and asynchronous operations, preserves a deliberate exit code `7`, checks both tunnel workflows over public HTTPS, deletes the sandbox, and confirms that only its stopped audit record remains.

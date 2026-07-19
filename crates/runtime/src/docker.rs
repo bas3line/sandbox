@@ -36,6 +36,10 @@ impl DockerRuntime {
         format!("sandbox-{id}")
     }
 
+    fn workspace_volume_name(id: SandboxId) -> String {
+        format!("sandbox-{id}-workspace")
+    }
+
     async fn owned_exists(&self, id: SandboxId) -> Result<bool, RuntimeError> {
         let name = Self::name(id);
         let output = Command::new("docker")
@@ -94,6 +98,117 @@ impl DockerRuntime {
         }
     }
 
+    async fn owned_workspace_volume_exists(&self, id: SandboxId) -> Result<bool, RuntimeError> {
+        let name = Self::workspace_volume_name(id);
+        let output = Command::new("docker")
+            .args([
+                "volume",
+                "inspect",
+                "--format",
+                "{{ index .Labels \"sandbox.dev/id\" }}",
+                &name,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        if output.status.success() {
+            let owner = String::from_utf8_lossy(&output.stdout);
+            if owner.trim() == id.to_string() {
+                return Ok(true);
+            }
+            return Err(RuntimeError::Command(format!(
+                "workspace volume {name} is owned by a different workload"
+            )));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+        if stderr.contains("no such volume") {
+            Ok(false)
+        } else {
+            Err(RuntimeError::Command(format!(
+                "docker volume inspect: {}",
+                stderr.trim()
+            )))
+        }
+    }
+
+    async fn ensure_workspace_volume(&self, id: SandboxId) -> Result<String, RuntimeError> {
+        let name = Self::workspace_volume_name(id);
+        if self.owned_workspace_volume_exists(id).await? {
+            return Ok(name);
+        }
+        self.checked(
+            &[
+                "volume".into(),
+                "create".into(),
+                "--label".into(),
+                format!("sandbox.dev/id={id}"),
+                name.clone(),
+            ],
+            "volume create",
+        )
+        .await?;
+        Ok(name)
+    }
+
+    async fn delete_workspace_volume(&self, id: SandboxId) -> Result<(), RuntimeError> {
+        if !self.owned_workspace_volume_exists(id).await? {
+            return Ok(());
+        }
+        self.checked(
+            &[
+                "volume".into(),
+                "rm".into(),
+                Self::workspace_volume_name(id),
+            ],
+            "volume rm",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn prepare_workspace(&self, id: SandboxId) -> Result<(), RuntimeError> {
+        // A named volume is root-owned when an image does not already contain
+        // /workspace. Keep the workload's configured non-root user, but make
+        // the isolated per-sandbox workspace writable after the container is
+        // started. This root exec has no added capabilities and the container
+        // still has a read-only root filesystem.
+        let writable_check = [
+            "exec".into(),
+            Self::name(id),
+            "/bin/sh".into(),
+            "-c".into(),
+            "test -w /workspace".into(),
+        ];
+        let output = Command::new("docker")
+            .args(&writable_check)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        if output.status.success() {
+            return Ok(());
+        }
+        self.checked(
+            &[
+                "exec".into(),
+                "--user".into(),
+                "0".into(),
+                Self::name(id),
+                "chmod".into(),
+                "0777".into(),
+                "/workspace".into(),
+            ],
+            "prepare workspace",
+        )
+        .await?;
+        self.checked(&writable_check, "verify writable workspace")
+            .await?;
+        Ok(())
+    }
+
     fn env_file(env: &BTreeMap<String, String>) -> Result<Option<NamedTempFile>, RuntimeError> {
         if env.is_empty() {
             return Ok(None);
@@ -119,6 +234,34 @@ impl DockerRuntime {
         args.extend(argv.iter().cloned());
         self.checked(&args, "exec --detach").await?;
         Ok(())
+    }
+
+    async fn ensure_local_image(&self, image: &str) -> Result<(), RuntimeError> {
+        if !image.ends_with(":local") {
+            return Ok(());
+        }
+        let output = Command::new("docker")
+            .args(["image", "inspect", image])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let hint = image
+            .strip_prefix("sandbox-agent-")
+            .and_then(|name| name.strip_suffix(":local"))
+            .map_or_else(
+                || format!("build {image} on the selected worker"),
+                |agent| {
+                    format!("run `./scripts/build-agent-image.sh {agent}` on the selected worker")
+                },
+            );
+        Err(RuntimeError::Command(format!(
+            "local image {image} is missing on this worker; {hint}, or pass an immutable registry image override"
+        )))
     }
 }
 
@@ -151,7 +294,9 @@ impl SandboxRuntime for DockerRuntime {
         if self.owned_exists(id).await? {
             return Ok(());
         }
+        self.ensure_local_image(&spec.image).await?;
         let env_file = Self::env_file(&spec.env)?;
+        let workspace_volume = self.ensure_workspace_volume(id).await?;
         let network = match spec.network {
             NetworkMode::Deny => "none",
             NetworkMode::RestrictedEgress => &self.restricted_network,
@@ -180,6 +325,10 @@ impl SandboxRuntime for DockerRuntime {
             "no-new-privileges:true".into(),
             "--entrypoint".into(),
             "/bin/sh".into(),
+            "--workdir".into(),
+            "/workspace".into(),
+            "--mount".into(),
+            format!("type=volume,src={workspace_volume},dst=/workspace"),
             "--tmpfs".into(),
             "/tmp:rw,noexec,nosuid,nodev,size=64m".into(),
             "--tmpfs".into(),
@@ -196,7 +345,10 @@ impl SandboxRuntime for DockerRuntime {
             "-c".into(),
             "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done".into(),
         ]);
-        self.checked(&args, "create").await?;
+        if let Err(error) = self.checked(&args, "create").await {
+            let _cleanup = self.delete_workspace_volume(id).await;
+            return Err(error);
+        }
         if let Err(error) = self
             .checked(&["start".into(), Self::name(id)], "start")
             .await
@@ -204,7 +356,15 @@ impl SandboxRuntime for DockerRuntime {
             let _cleanup = self.delete(id).await;
             return Err(error);
         }
-        self.start_command(id, &spec.command).await
+        if let Err(error) = self.prepare_workspace(id).await {
+            let _cleanup = self.delete(id).await;
+            return Err(error);
+        }
+        if let Err(error) = self.start_command(id, &spec.command).await {
+            let _cleanup = self.delete(id).await;
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn exec(
@@ -261,14 +421,14 @@ impl SandboxRuntime for DockerRuntime {
         if let Some(tunnels) = &self.tunnels {
             tunnels.cleanup(id).await?;
         }
-        if !self.owned_exists(id).await? {
-            return Ok(());
+        if self.owned_exists(id).await? {
+            self.checked(
+                &["rm".into(), "--force".into(), Self::name(id)],
+                "rm --force",
+            )
+            .await?;
         }
-        self.checked(
-            &["rm".into(), "--force".into(), Self::name(id)],
-            "rm --force",
-        )
-        .await?;
+        self.delete_workspace_volume(id).await?;
         Ok(())
     }
 }
@@ -277,4 +437,25 @@ fn truncate(bytes: &[u8], limit: usize) -> (String, bool) {
     let truncated = bytes.len() > limit;
     let bytes = &bytes[..bytes.len().min(limit)];
     (String::from_utf8_lossy(bytes).into_owned(), truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DockerRuntime, truncate};
+    use sandbox_core::SandboxId;
+
+    #[test]
+    fn workspace_volumes_are_scoped_to_the_sandbox() {
+        let id = SandboxId::new();
+        assert_eq!(
+            DockerRuntime::workspace_volume_name(id),
+            format!("sandbox-{id}-workspace")
+        );
+    }
+
+    #[test]
+    fn output_truncation_reports_when_data_was_cut() {
+        assert_eq!(truncate(b"abcdef", 3), ("abc".into(), true));
+        assert_eq!(truncate(b"abc", 3), ("abc".into(), false));
+    }
 }

@@ -3,12 +3,13 @@
 ## Connection
 
 ```sh
-export SANDBOX_URL=https://sandbox.example.com
+sandbox config set-server https://sandbox.example.com
 export SANDBOX_TOKEN='read-from-your-secret-store'
 sandbox doctor
+sandbox config show
 ```
 
-Global options are `--server`, `--token`, and `--json`. Prefer environment variables so secrets do not enter shell history.
+The config file stores only the controller URL. `--server` and `SANDBOX_URL` override it. Global options are `--server`, `--token`, and `--json`; put them before the final `--` argument delimiter. Prefer an environment or secret store for the token so it does not enter shell history.
 
 ## Create
 
@@ -31,15 +32,18 @@ sandbox create \
   --label team=platform
 ```
 
-An optional startup command follows `--`. Save both the sandbox ID and create operation ID. Wait for the operation before executing.
+An optional startup command follows `--`. Create waits until ready by default. Use `--no-wait` only when the caller will save the operation ID and call `sandbox wait`.
 
 ## Inspect and list
 
 ```sh
 sandbox list --tenant "$TENANT"
+sandbox list --tenant "$TENANT" --all
 sandbox inspect "$SANDBOX_ID"
 sandbox --json inspect "$SANDBOX_ID"
 ```
+
+Normal list output excludes stopped and failed audit records. Use `--all` when those records are needed.
 
 ## Execute
 
@@ -54,8 +58,10 @@ Arguments after `--` remain an argv vector. Use `--no-wait` only when the caller
 
 ```sh
 sandbox wait "$OPERATION_ID" --timeout 900
-sandbox delete "$SANDBOX_ID" --wait
+sandbox delete "$SANDBOX_ID"
 ```
+
+Deletion waits and reports completion by default. Use `--no-wait` only when tracking the operation separately.
 
 ## Public sharing
 
@@ -65,7 +71,7 @@ Share a service running on the agent's current machine:
 sandbox http 3000
 ```
 
-The command checks both local IPv4 and IPv6, prints a temporary public HTTPS URL, and stays attached until Ctrl-C. It does not require `SANDBOX_URL`. It prefers an installed `cloudflared` and falls back to the system SSH client with localhost.run. Treat the URL as public and never expose credentials, private data, or admin interfaces.
+The command checks both local IPv4 and IPv6, connects to the hosted Sandbox WebSocket relay, prints a temporary URL on the deployment's `*.tunnel.yshubham.com` wildcard, and stays attached until Ctrl-C. It does not require `SANDBOX_URL`. `SANDBOX_HTTP_RELAY` or `--relay` selects a self-hosted relay. Treat the URL as public and never expose credentials, private data, or admin interfaces.
 
 For a service inside a managed sandbox, make it listen on `0.0.0.0`, then use the controller-managed tunnel commands:
 
@@ -82,10 +88,12 @@ Use `sandbox tunnel create SANDBOX_ID --port PORT --subdomain review-42` only wh
 ```sh
 sandbox agent list
 sandbox agent run codex --tenant "$TENANT"
-sandbox agent run opencode --tenant "$TENANT" --image registry.example.com/agents/opencode@sha256:...
+sandbox agent run opencode --tenant "$TENANT" -- --version
+sandbox agent run opencode --tenant "$TENANT" \
+  --image registry.example.com/agents/opencode@sha256:... -- --version
 ```
 
-Agent-specific arguments follow `--`.
+Without agent-specific arguments, the command provisions an agent-ready sandbox. Arguments after `--` run through the observable exec path. Local images must exist on every eligible worker; CommandCode always requires `--image`. Agent profiles default to restricted egress, so pass `--network open` only when external model access is required.
 
 ## MCP configuration
 

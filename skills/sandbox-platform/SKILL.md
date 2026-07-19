@@ -9,7 +9,7 @@ Use the authenticated Sandbox controller for remote execution. Treat agent instr
 
 ## Run the lifecycle
 
-1. Require `SANDBOX_URL` and obtain `SANDBOX_TOKEN` from the caller's secret mechanism. Never print the token.
+1. Require a controller configured with `sandbox config set-server URL`, `SANDBOX_URL`, or `--server`, and obtain `SANDBOX_TOKEN` from the caller's secret mechanism. Never print or persist the token.
 2. Call `sandbox_health` or run `sandbox doctor`. Stop and report connection or authentication failures.
 3. Inspect existing sandboxes when reuse is allowed. Otherwise choose a base sandbox or a built-in coding-agent profile.
 4. Classify repository trust, generated-code execution, secret need, data sensitivity, network need, resources, and TTL before creation.
@@ -49,13 +49,14 @@ With MCP, call `sandbox_agent_list`, then `sandbox_agent_run`. With the CLI:
 ```sh
 sandbox agent list
 sandbox agent run codex --tenant "$TENANT"
+sandbox agent run opencode --tenant "$TENANT" -- --version
 ```
 
-The default local agent images must exist on workers. Supply an approved immutable `image` override when the deployment uses a registry.
+Running without agent arguments provisions an agent-ready sandbox. Arguments after `--` use the observable exec path. The default local agent images must exist on workers. Supply an approved immutable `image` override when the deployment uses a registry. CommandCode always requires an image override.
 
 ## Handle asynchronous work
 
-Creation, execution, tunnel changes, and deletion return operation IDs. Use `sandbox_wait` / `sandbox_operation` or `sandbox wait`. A wait timeout is ambiguous: inspect the original operation before retrying a mutation.
+Creation, execution, tunnel changes, and deletion return operation IDs. CLI mutations wait by default; use `--no-wait` only when the caller will track the ID with `sandbox wait`. MCP callers use `sandbox_wait` / `sandbox_operation`. A wait timeout is ambiguous: inspect the original operation before retrying a mutation.
 
 Read [references/operations.md](references/operations.md) for states, failure codes, retry rules, and `no_capacity` diagnosis.
 
