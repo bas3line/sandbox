@@ -117,6 +117,7 @@ flowchart LR
    | Public hostname | Internal service |
    |---|---|
    | `sandbox.example.com` | `http://controller:8080` |
+   | `relay.tunnel.example.com` | `http://controller:8080` |
    | `*.tunnel.example.com` | `http://tunnel-edge:8080` |
 
    Let Cloudflare create the proxied `CNAME` records to `<tunnel-id>.cfargotunnel.com`. Remove any conflicting origin-address `A`/`AAAA` record only after the connector and replacement routes are ready.

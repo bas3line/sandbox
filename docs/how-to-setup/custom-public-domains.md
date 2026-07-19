@@ -143,6 +143,7 @@ For a private origin, create a remotely managed Cloudflare Tunnel and publish th
 | Public hostname | Internal service |
 |---|---|
 | `sandbox.example.com` | `http://controller:8080` |
+| `relay.tunnel.example.com` | `http://controller:8080` |
 | `*.tunnel.example.com` | `http://tunnel-edge:8080` |
 
 Store the connector token only in a mode-`0600` file and start the outbound overlay:
@@ -154,6 +155,8 @@ SANDBOX_TUNNEL_DOMAIN=tunnel.example.com
 SANDBOX_TUNNEL_SCHEME=https
 SANDBOX_TUNNEL_ENTRYPOINT=web
 SANDBOX_TUNNEL_EDGE_TLS=false
+SANDBOX_LOCAL_RELAY_ENABLED=true
+SANDBOX_LOCAL_RELAY_REQUIRE_AUTH=true
 CLOUDFLARE_TUNNEL_TOKEN_FILE=/etc/sandbox/cloudflare-tunnel.token
 ```
 

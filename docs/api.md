@@ -14,6 +14,7 @@ The controller serves JSON over HTTP. Put TLS and enterprise identity at the edg
 | `DELETE` | `/v1/sandboxes/{id}` | operator | Enqueue teardown |
 | `GET` | `/v1/operations/{id}` | operator | Poll operation |
 | `GET` | `/v1/tunnels/authorize?domain=...` | public edge | Return `204` only for an active exact hostname |
+| `GET` WebSocket | `/v1/local-tunnels/connect` | operator or enabled anonymous relay client | Create one ephemeral local HTTP/WebSocket relay session |
 | `POST` | `/v1/nodes/register` | worker | Upsert capacity/capabilities |
 | `POST` | `/v1/nodes/{id}/heartbeat` | worker | Update availability and pressure |
 | `GET` | `/v1/nodes/{id}/assignments` | worker | Lease work |
@@ -36,5 +37,7 @@ Stable codes currently include `invalid_request`, `unauthorized`, `not_found`, `
 Create, exec, tunnel changes, and delete are asynchronous. A successful enqueue returns an operation record; clients poll until `succeeded` or `failed`. Command exit status and bounded output are stored on the operation.
 
 `POST /v1/sandboxes` accepts optional `spec.exposures` entries containing `container_port`, `protocol: "http"`, optional lowercase `subdomain`, and `authenticated: false`. Post-create tunnel creation accepts the same fields. Every returned `public_url` is Internet-facing. See [tunnels.md](tunnels.md) for supported protocols and policy restrictions.
+
+`GET /v1/local-tunnels/connect` is available only when `tunnel.local_relay_enabled` is true. It upgrades to the versioned JSON relay WebSocket used by `sandbox http PORT`; deployments require the operator token by default and may explicitly allow anonymous relay creation. The resulting public URL never inherits API authentication.
 
 The Rust structs under `crates/core/src/api.rs` and `model.rs` are the canonical v0.1 schema. OpenAPI generation and streaming transports are roadmap items.
