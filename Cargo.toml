@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.97.1"
 authors = ["Sandbox contributors"]
@@ -53,12 +53,12 @@ url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.24.0", features = ["serde", "v7"] }
 zeroize = { version = "1.8.2", features = ["derive"] }
 
-sandbox-aegis = { version = "0.1.0", path = "crates/aegis" }
-sandbox-client = { version = "0.1.0", path = "crates/client" }
-sandbox-core = { version = "0.1.0", path = "crates/core" }
-sandbox-events = { version = "0.1.0", path = "crates/events" }
-sandbox-runtime = { version = "0.1.0", path = "crates/runtime" }
-sandbox-storage = { version = "0.1.0", path = "crates/storage" }
+sandbox-aegis = { version = "0.1.1", path = "crates/aegis" }
+sandbox-client = { version = "0.1.1", path = "crates/client" }
+sandbox-core = { version = "0.1.1", path = "crates/core" }
+sandbox-events = { version = "0.1.1", path = "crates/events" }
+sandbox-runtime = { version = "0.1.1", path = "crates/runtime" }
+sandbox-storage = { version = "0.1.1", path = "crates/storage" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
