@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS assignments;
+DROP TABLE IF EXISTS operations;
+DROP TABLE IF EXISTS sandboxes;
+DROP TABLE IF EXISTS nodes;

@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = [
+  "cmd/sandbox",
+  "cmd/sandbox-mcp",
+  "cmd/sandboxd",
+  "crates/aegis",
+  "crates/client",
+  "crates/core",
+  "crates/events",
+  "crates/runtime",
+  "crates/storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+authors = ["Sandbox contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/bas3line/sandbox"
+homepage = "https://github.com/bas3line/sandbox"
+
+[workspace.dependencies]
+anyhow = "1.0.103"
+async-nats = "0.49.1"
+async-trait = "0.1.89"
+axum = { version = "0.8.9", features = ["http2", "json", "macros", "ws"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.2", features = ["derive", "env", "string"] }
+config = { version = "0.15.25", default-features = false, features = ["toml"] }
+diesel = { version = "2.3.11", features = ["chrono", "postgres", "serde_json", "uuid"] }
+diesel-async = { version = "0.9.2", features = ["bb8", "postgres"] }
+futures-util = "0.3.33"
+http = "1.4.2"
+openssl-sys = { version = "0.9.117", features = ["vendored"] }
+pq-sys = { version = "0.7.5", features = ["bundled"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+secrecy = { version = "0.10.3", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+tokio = { version = "1.53.0", features = ["full"] }
+tokio-util = "0.7.18"
+tower-http = { version = "0.7.0", features = ["catch-panic", "cors", "limit", "request-id", "timeout", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = { version = "2.5.8", features = ["serde"] }
+uuid = { version = "1.24.0", features = ["serde", "v7"] }
+zeroize = { version = "1.8.2", features = ["derive"] }
+
+sandbox-aegis = { path = "crates/aegis" }
+sandbox-client = { path = "crates/client" }
+sandbox-core = { path = "crates/core" }
+sandbox-events = { path = "crates/events" }
+sandbox-runtime = { path = "crates/runtime" }
+sandbox-storage = { path = "crates/storage" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "abort"
+strip = "symbols"
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+opt-level = "z"

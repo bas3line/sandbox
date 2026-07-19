@@ -1,0 +1,40 @@
+[package]
+name = "sandboxd"
+description = "Sandbox control-plane and worker daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sandboxd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+sandbox-aegis.workspace = true
+sandbox-client.workspace = true
+sandbox-core.workspace = true
+sandbox-events.workspace = true
+sandbox-runtime.workspace = true
+sandbox-storage.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

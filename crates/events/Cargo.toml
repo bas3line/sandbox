@@ -1,0 +1,21 @@
+[package]
+name = "sandbox-events"
+description = "Pluggable in-memory and NATS lifecycle event bus for Sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-nats.workspace = true
+async-trait.workspace = true
+sandbox-core.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

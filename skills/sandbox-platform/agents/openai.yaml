@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sandbox Platform"
+  short_description: "Run isolated coding work on self-hosted Sandbox"
+  default_prompt: "Use $sandbox-platform to run this task in a disposable remote sandbox and clean it up safely."

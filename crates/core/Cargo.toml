@@ -1,0 +1,22 @@
+[package]
+name = "sandbox-core"
+description = "Shared types, configuration, and protocol contracts for Sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+config.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,8 @@
+.git
+.github
+target
+deploy/compose/data
+docs
+skills
+*.md
+!README.md

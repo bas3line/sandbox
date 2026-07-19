@@ -1,0 +1,107 @@
+name: sandbox
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: sandbox
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandbox-local-only}
+      POSTGRES_DB: sandbox
+    volumes:
+      # PostgreSQL 18 stores data under a major-version directory so in-place
+      # upgrades can use pg_upgrade --link without crossing a mount boundary.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandbox -d sandbox"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  controller:
+    build:
+      context: ../..
+    command: ["--role", "controller"]
+    environment:
+      SANDBOX__SERVER__API_TOKEN: ${SANDBOX_API_TOKEN:?set SANDBOX_API_TOKEN}
+      SANDBOX__SERVER__NODE_TOKEN: ${SANDBOX_NODE_TOKEN:?set SANDBOX_NODE_TOKEN}
+      SANDBOX__STORE__KIND: postgres
+      SANDBOX__STORE__DATABASE_URL: postgres://sandbox:${POSTGRES_PASSWORD:-sandbox-local-only}@postgres:5432/sandbox
+      SANDBOX__BUS__KIND: ${SANDBOX_BUS_KIND:-memory}
+      SANDBOX__BUS__NATS_URL: nats://nats:4222
+      # Developer Docker mode only. Production should keep the default 55 and provide microVM workers.
+      SANDBOX__POLICY__MICROVM_RISK_THRESHOLD: ${SANDBOX_MICROVM_RISK_THRESHOLD:-101}
+      RUST_LOG: ${RUST_LOG:-sandboxd=info,tower_http=info}
+    ports:
+      - "${SANDBOX_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "sandbox", "--server", "http://127.0.0.1:8080", "doctor"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    user: "10001:10001"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.sandbox.rule: "Host(`${SANDBOX_DOMAIN:-sandbox.localhost}`)"
+      traefik.http.services.sandbox.loadbalancer.server.port: "8080"
+
+  worker:
+    build:
+      context: ../..
+    command: ["--role", "worker"]
+    environment:
+      SANDBOX__NODE__CONTROL_PLANE_URL: http://controller:8080
+      SANDBOX__NODE__TOKEN: ${SANDBOX_NODE_TOKEN:?set SANDBOX_NODE_TOKEN}
+      SANDBOX__NODE__NAME: ${SANDBOX_NODE_NAME:-compose-worker}
+      SANDBOX__NODE__REGION: ${SANDBOX_REGION:-local}
+      SANDBOX__NODE__ZONE: ${SANDBOX_ZONE:-local-a}
+      SANDBOX__NODE__RUNTIME: docker
+      SANDBOX__NODE__DOCKER_RESTRICTED_NETWORK: sandbox-egress
+      SANDBOX__NODE__STATE_DIR: /var/lib/sandbox
+      RUST_LOG: ${RUST_LOG:-sandboxd=info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - worker-state:/var/lib/sandbox
+    networks:
+      - default
+      - sandbox-egress
+    depends_on:
+      controller:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.12-alpine
+    command: ["--jetstream", "--store_dir", "/data"]
+    profiles: ["events"]
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:v3.6
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    profiles: ["edge"]
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+networks:
+  default:
+  sandbox-egress:
+    name: sandbox-egress
+    internal: true
+
+volumes:
+  postgres-data:
+  worker-state:
+  nats-data:

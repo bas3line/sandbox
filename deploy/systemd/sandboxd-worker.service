@@ -1,0 +1,22 @@
+[Unit]
+Description=Sandbox worker
+After=network-online.target docker.service
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+User=sandbox
+Group=docker
+EnvironmentFile=/etc/sandbox/sandbox.env
+ExecStart=/usr/local/bin/sandboxd --role worker --config /etc/sandbox/sandbox.toml
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sandbox
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

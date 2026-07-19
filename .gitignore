@@ -1,0 +1,13 @@
+/target/
+/.env
+/.env.*
+!/.env.example
+/.sandbox/
+*.log
+*.pid
+*.sock
+*.profraw
+.DS_Store
+/dist/
+/coverage/
+/deploy/compose/data/

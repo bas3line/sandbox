@@ -1,0 +1,39 @@
+[server]
+bind = "0.0.0.0:8080"
+# Supply secrets through SANDBOX__SERVER__API_TOKEN and
+# SANDBOX__SERVER__NODE_TOKEN, not this file.
+allow_unauthenticated_dev = false
+heartbeat_interval_seconds = 10
+heartbeat_timeout_seconds = 45
+assignment_lease_seconds = 30
+request_body_limit_bytes = 1048576
+
+[store]
+kind = "postgres"
+max_connections = 16
+# Supply SANDBOX__STORE__DATABASE_URL at runtime.
+
+[bus]
+# "memory" minimizes services and RAM. Use "nats" for durable enterprise fanout.
+kind = "memory"
+nats_url = "nats://nats:4222"
+subject = "sandbox.events"
+
+[policy]
+max_ttl_seconds = 86400
+microvm_risk_threshold = 55
+max_output_bytes = 1048576
+
+[node]
+control_plane_url = "http://127.0.0.1:8080"
+name = "worker-01"
+region = "local"
+zone = "local-a"
+runtime = "docker"
+docker_restricted_network = "sandbox-egress"
+resources = { cpu_millis = 8000, memory_mib = 16384, disk_mib = 102400, pids = 4096 }
+max_sandboxes = 100
+state_dir = "/var/lib/sandbox"
+
+[node.labels]
+pool = "general"
