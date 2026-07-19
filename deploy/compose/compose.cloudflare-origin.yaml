@@ -1,0 +1,19 @@
+name: sandbox
+
+# Merge after compose.caddy.yaml for a proxied Cloudflare A/AAAA record using
+# Advanced Certificate Manager at the edge and Origin CA with Full (strict)
+# between Cloudflare and Caddy.
+
+services:
+  caddy:
+    volumes:
+      - ../caddy/Caddyfile.cloudflare-origin.example:/etc/caddy/Caddyfile:ro
+    secrets:
+      - cloudflare_origin_cert
+      - cloudflare_origin_key
+
+secrets:
+  cloudflare_origin_cert:
+    file: ${CLOUDFLARE_ORIGIN_CERT_FILE:?set CLOUDFLARE_ORIGIN_CERT_FILE}
+  cloudflare_origin_key:
+    file: ${CLOUDFLARE_ORIGIN_KEY_FILE:?set CLOUDFLARE_ORIGIN_KEY_FILE}

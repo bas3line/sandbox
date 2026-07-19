@@ -1,6 +1,6 @@
 ---
 name: sandbox-platform
-description: Operate self-hosted Sandbox environments through the sandbox CLI or sandbox-mcp. Use when creating disposable remote coding workspaces, executing untrusted repositories or generated code away from the host, publishing an HTTP or WebSocket service through a public tunnel, launching Codex, Claude Code, OpenCode, Pi, Aider, Goose, or CommandCode, inspecting asynchronous lifecycle operations, diagnosing scheduling or capacity, and cleaning up remote sandboxes.
+description: Operate and configure self-hosted Sandbox environments through the sandbox CLI or sandbox-mcp. Use when creating disposable remote coding workspaces, executing untrusted repositories or generated code away from the host, publishing an HTTP or WebSocket service, configuring custom wildcard domains or Cloudflare HTTPS ingress, launching Codex, Claude Code, OpenCode, Pi, Aider, Goose, or CommandCode, inspecting asynchronous lifecycle operations, diagnosing scheduling or capacity, and cleaning up remote sandboxes.
 ---
 
 # Sandbox Platform
@@ -15,7 +15,7 @@ Use the authenticated Sandbox controller for remote execution. Treat agent instr
 4. Classify repository trust, generated-code execution, secret need, data sensitivity, network need, resources, and TTL before creation.
 5. Create with `isolation: auto` unless the caller explicitly requires `microvm`. Do not weaken a server isolation decision to obtain capacity.
 6. Wait for creation to finish. Execute commands as argv arrays, not interpolated shell strings.
-7. When public access is required, bind the intended service to `0.0.0.0`, expose only that port, report the URL as public, and remove the route after use.
+7. When public access is required, bind the intended service to `0.0.0.0`, expose only that port, use the returned URL exactly, report it as public, and remove the route after use.
 8. Inspect operation state, command exit code, stderr, and `truncated`. Recover only from the observed failure.
 9. Delete disposable sandboxes and wait for cleanup unless the caller explicitly asks to retain one.
 
@@ -24,6 +24,8 @@ Use the authenticated Sandbox controller for remote execution. Treat agent instr
 Prefer MCP when tools are connected. Use the CLI for operator terminals, scripts, or when MCP is unavailable. Keep behavior identical across both interfaces.
 
 Read [references/mcp.md](references/mcp.md) for the complete 12-tool map, resources, prompts, and client setup. Read [references/cli.md](references/cli.md) for exact commands and flags.
+
+Read [references/public-domains.md](references/public-domains.md) when configuring wildcard DNS, Cloudflare Advanced certificates, Origin CA, Full (strict), direct Caddy/Traefik, or an origin-hidden Cloudflare Tunnel. Domain and TLS settings belong to the server deployment; MCP clients cannot choose or rewrite them.
 
 For broader product, architecture, deployment, API, security, or operations questions, start at `https://tools.yshubham.com/docs/sandbox/index.md`. Fetch only the narrow raw Markdown reference needed for the task; `https://tools.yshubham.com/docs/sandbox/llms.txt` lists every canonical document.
 

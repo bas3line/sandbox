@@ -34,6 +34,35 @@ For a full-setup Cloudflare zone, a hostname below `*.tunnel.example.com` is dee
 
 An orange-cloud `A` record hides the origin from ordinary DNS answers but still leaves a public origin path. For an origin that is not publicly reachable, use the outbound-only Cloudflare Tunnel overlay below and replace the origin-address record with the tunnel-managed `CNAME`.
 
+## Cloudflare proxied wildcard with Full (strict)
+
+Use this mode when the host accepts public ports 80/443 but Cloudflare should proxy the controller and tunnel wildcard. Order an Advanced edge certificate containing the exact nested wildcard, then issue a Cloudflare Origin CA certificate containing `*.tunnel.example.com`.
+
+Store the Origin CA certificate and private key in root-readable files outside Git, then set:
+
+```sh
+export SANDBOX_DOMAIN=sandbox.example.com
+export SANDBOX_PORT=127.0.0.1:8080
+export SANDBOX_TUNNEL_ENABLED=true
+export SANDBOX_TUNNEL_DOMAIN=tunnel.example.com
+export SANDBOX_TUNNEL_SCHEME=https
+export SANDBOX_TUNNEL_ENTRYPOINT=web
+export SANDBOX_TUNNEL_EDGE_TLS=false
+export SANDBOX_ACME_EMAIL=admin@example.com
+export CLOUDFLARE_ORIGIN_CERT_FILE=/etc/sandbox/origin-tls/tunnel.crt
+export CLOUDFLARE_ORIGIN_KEY_FILE=/etc/sandbox/origin-tls/tunnel.key
+
+docker compose \
+  -f deploy/compose/compose.yaml \
+  -f deploy/compose/compose.caddy.yaml \
+  -f deploy/compose/compose.cloudflare-origin.yaml \
+  --profile caddy-edge up --build -d
+```
+
+Set the Cloudflare zone to **Full (strict)**. Never use Flexible. The edge certificate protects the visitor connection; the matching Origin CA certificate protects and authenticates the Cloudflare-to-Caddy connection. Origin CA certificates are not browser trust certificates, so keep the wildcard proxied.
+
+The final overlay replaces the example Caddy configuration and adds file-backed Compose secrets. Full issuance, DNS, certificate placement, preflight, and lifecycle verification are in [Set up custom public domains](how-to-setup/custom-public-domains.md).
+
 ## Fixed proxied wildcard without an edge certificate
 
 If an operator will not change an existing proxied multi-level wildcard and has not purchased an Advanced edge certificate, Sandbox can publish **HTTP-only** URLs through that record. This is a compatibility mode, not the default and not equivalent to HTTPS.
@@ -171,7 +200,7 @@ sandbox tunnel list "$SANDBOX_ID"
 sandbox tunnel delete "$SANDBOX_ID" "$TUNNEL_ID"
 ```
 
-MCP clients use `sandbox_tunnel_create` and `sandbox_tunnel_delete`; `sandbox_create.exposures` can publish ports during creation. Treat every returned URL as Internet-facing.
+MCP clients use `sandbox_tunnel_create` and `sandbox_tunnel_delete`; `sandbox_create.exposures` can publish ports during creation. Treat every returned URL as Internet-facing and use it exactly as returned. The controller persists the configured public scheme; clients must not rewrite it.
 
 ## Configuration
 

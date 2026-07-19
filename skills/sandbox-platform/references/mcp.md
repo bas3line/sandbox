@@ -23,7 +23,7 @@ Cursor, Claude Desktop, Windsurf, Cline, Roo Code, and Gemini Code Assist use th
 
 Pi, Aider, CommandCode, and hosts without native MCP use the `sandbox` CLI with this skill. `sandbox-mcp` is a local stdio bridge. It connects to the public controller API and does not need worker, database, Docker, or NATS access. Never place `SANDBOX_TOKEN` in a committed client config.
 
-Cloudflare connector credentials stay with the deployment operator. Never request or pass a Cloudflare tunnel token through MCP, agent configuration, sandbox environment variables, or task arguments. An origin-hidden deployment does not change the client tool contract.
+Cloudflare connector credentials, Origin CA keys, DNS, and TLS settings stay with the deployment operator. Never request or pass them through MCP, agent configuration, sandbox environment variables, or task arguments. Direct Caddy, proxied Cloudflare Full (strict), and an origin-hidden Cloudflare Tunnel all use the same client tool contract.
 
 ## Tools
 
@@ -46,13 +46,15 @@ For `sandbox_create`, supply `tenant` and `image`. Optional fields cover startup
 
 For `sandbox_exec`, supply `sandbox_id` and `argv`. Optional fields are `cwd`, non-secret `env`, `timeout_seconds`, and `wait`.
 
-For `sandbox_tunnel_create`, supply `sandbox_id` and `container_port`; optionally request a lowercase `subdomain`. The service must listen on `0.0.0.0`. Treat the returned URL as Internet-facing and delete it when no longer required.
+For `sandbox_tunnel_create`, supply `sandbox_id` and `container_port`; optionally request a lowercase `subdomain`. The service must listen on `0.0.0.0`. Treat the returned URL as Internet-facing, use its domain and scheme exactly as returned, and delete it when no longer required. An `http://` result is transport-insecure; the client must not rewrite it to HTTPS.
 
 ## Resources
 
 - Read `sandbox://capabilities` before claiming a deployment feature exists.
 - Read `sandbox://agents` to discover profile defaults without a controller call.
 - Read `sandbox://workflow` for the compact lifecycle runbook.
+
+`sandbox://capabilities` exposes structured `public_tunnels` metadata. Domain/TLS policy is deployment-managed, URL schemes are server-configured, and tunnel authentication remains explicitly unimplemented.
 
 ## Prompts
 

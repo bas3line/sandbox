@@ -41,6 +41,19 @@ docker compose \
 
 The connector token is a file-backed Compose secret. Cloudflare route, certificate, token-file, and firewall setup are documented in [tunnels.md](tunnels.md#cloudflare-tunnel-with-a-hidden-origin).
 
+For proxied Cloudflare DNS with public origin ports and end-to-end Full (strict) TLS, merge the Caddy and Origin CA overlays:
+
+```sh
+docker compose \
+  --env-file /etc/sandbox/runtime.env \
+  -f deploy/compose/compose.yaml \
+  -f deploy/compose/compose.caddy.yaml \
+  -f deploy/compose/compose.cloudflare-origin.yaml \
+  --profile caddy-edge up --build -d
+```
+
+Set `CLOUDFLARE_ORIGIN_CERT_FILE` and `CLOUDFLARE_ORIGIN_KEY_FILE` to root-readable files outside Git. The exact DNS, Advanced certificate, Origin CA, Full (strict), and verification procedure is in [Set up custom public domains](how-to-setup/custom-public-domains.md).
+
 If an existing proxied nested wildcard cannot be changed and has no Advanced edge certificate, the reviewed `compose.cloudflare-http.yaml` overlay provides an explicit HTTP-only compatibility mode. It requires `SANDBOX_TUNNEL_SCHEME=http` and must not carry secrets or sensitive application traffic. See [tunnels.md](tunnels.md#fixed-proxied-wildcard-without-an-edge-certificate).
 
 The worker mounts the Docker socket. This is a developer/single-tenant topology. It also raises the AEGIS microVM threshold to 101. Both choices are deliberately visible in the Compose file.
@@ -64,6 +77,8 @@ The `edge` Compose profile routes the controller API using `SANDBOX_DOMAIN` and 
 When an existing Caddy installation owns ports 80/443, use the Caddy Compose overlay and controller-backed on-demand TLS authorization. See [tunnels.md](tunnels.md) for DNS, TLS, configuration, isolation, and verification. Raw TCP forwarding is not implemented.
 
 When Cloudflare must hide the origin, use the Cloudflare Tunnel overlay instead of pointing a proxied `A` record at the host. A nested wildcard requires an Advanced Cloudflare edge certificate; Universal SSL covers only the apex and first-level subdomains in a full DNS setup.
+
+Start with [Set up a Sandbox server](how-to-setup/server.md), [Set up a client PC](how-to-setup/client.md), or [Set up custom public domains](how-to-setup/custom-public-domains.md) for task-oriented instructions.
 
 ## Systemd
 

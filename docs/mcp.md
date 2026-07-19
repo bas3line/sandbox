@@ -20,7 +20,9 @@ sandbox doctor
 
 `sandbox-mcp` never needs database, NATS, Docker, or worker credentials. It only needs the public controller URL and an API token.
 
-Cloudflare connector credentials are operator-only. Do not pass a Cloudflare tunnel token to MCP clients or coding agents. When the controller and wildcard routes use the outbound Cloudflare overlay, clients continue to use the same `SANDBOX_URL`, and tunnel tools return the same public HTTPS URLs.
+Cloudflare connector credentials, Origin CA private keys, DNS, and TLS settings are operator-only. Do not pass them to MCP clients or coding agents. Direct Caddy, proxied Cloudflare Full (strict), and outbound Cloudflare Tunnel deployments all use the same client contract. Tunnel tools return the server-configured public URL; clients must use its domain and scheme exactly as returned.
+
+See [Set up a client PC](how-to-setup/client.md) for the end-user path and [Set up custom public domains](how-to-setup/custom-public-domains.md) for operator-side DNS and TLS.
 
 Skip all automatic MCP registration while keeping the binaries and skill:
 
@@ -257,7 +259,7 @@ The server publishes static, low-cost context that clients can read without call
 
 | URI | Content |
 |---|---|
-| `sandbox://capabilities` | Implemented features and explicit production gates |
+| `sandbox://capabilities` | Implemented features, structured public-domain behavior, and explicit production gates |
 | `sandbox://agents` | Agent names, images, executables, and upstream projects |
 | `sandbox://workflow` | Compact safe-lifecycle runbook |
 
@@ -293,5 +295,7 @@ Verify initialization instructions, all 12 tools, all three resources, both prom
 - Never place credentials in prompts, argv, labels, image names, or ordinary environment maps.
 - Default to denied network access; request restricted or open egress only when needed.
 - Treat every tunnel URL as Internet-facing; expose only an intended service port and remove it after use.
+- Use a returned tunnel URL exactly. An `http://` result is transport-insecure, not an invitation for the client to invent HTTPS.
+- Keep Cloudflare connector tokens and Origin CA private keys on the deployment server, never in MCP configuration or sandbox inputs.
 - Configure tool approval policy in the MCP host, but keep real authorization server-side.
 - Docker workers are for dedicated or trusted worker hosts. A separate VMM-grade runtime is required when your deployment needs a stronger host boundary.
