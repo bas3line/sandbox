@@ -20,6 +20,12 @@ use url::Url;
 pub enum ClientError {
     #[error("HTTP client error: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("cannot reach Sandbox server at {url}: {source}")]
+    Request {
+        url: Url,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("invalid URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("Sandbox API returned {status}: {code}: {message}")]
@@ -30,6 +36,13 @@ pub enum ClientError {
     },
     #[error("Sandbox API returned {0} with an unreadable error body")]
     Unexpected(StatusCode),
+}
+
+impl ClientError {
+    #[must_use]
+    pub fn is_connect(&self) -> bool {
+        matches!(self, Self::Request { source, .. } if source.is_connect())
+    }
 }
 
 #[derive(Clone)]
@@ -209,14 +222,17 @@ impl SandboxClient {
         R: DeserializeOwned,
     {
         let url = self.base_url.join(path)?;
-        let mut request = self.http.request(method, url);
+        let mut request = self.http.request(method, url.clone());
         if let Some(token) = &self.token {
             request = request.bearer_auth(token.expose_secret());
         }
         if let Some(body) = body {
             request = request.json(body);
         }
-        let response = request.send().await?;
+        let response = request
+            .send()
+            .await
+            .map_err(|source| ClientError::Request { url, source })?;
         let status = response.status();
         if status.is_success() {
             return response.json().await.map_err(Into::into);

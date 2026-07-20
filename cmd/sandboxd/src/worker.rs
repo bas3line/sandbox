@@ -64,11 +64,21 @@ pub async fn run(config: Arc<SandboxConfig>, cancel: CancellationToken) -> Resul
                         for assignment in response.assignments {
                             let permit = concurrency.clone().acquire_owned().await.context("worker semaphore closed")?;
                             let client = client.clone();
+                            let config = config.clone();
                             let runtime = runtime.clone();
                             let state = state.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                if let Err(error) = process_assignment(&client, runtime, state, assignment).await {
+                                if let Err(error) = process_assignment(
+                                    &client,
+                                    &config,
+                                    node_id,
+                                    runtime,
+                                    state,
+                                    assignment,
+                                )
+                                .await
+                                {
                                     error!(%error, "assignment processing failed");
                                 }
                             });
@@ -105,6 +115,8 @@ async fn register_with_retry(
 
 async fn process_assignment(
     client: &SandboxClient,
+    config: &SandboxConfig,
+    node_id: NodeId,
     runtime: RuntimeRef,
     state: Arc<WorkerState>,
     assignment: Assignment,
@@ -147,13 +159,16 @@ async fn process_assignment(
             .map(|()| (SandboxState::Stopped, None, None)),
     };
 
+    let mut capacity_changed = false;
     let request = match result {
         Ok((sandbox_state, output_and_success, allocation)) => {
             if let Some(resources) = allocation {
                 state.allocations.lock().await.insert(sandbox_id, resources);
+                capacity_changed = true;
             }
             if matches!(assignment.kind, AssignmentKind::Delete) {
                 state.allocations.lock().await.remove(&sandbox_id);
+                capacity_changed = true;
             }
             let (output, success) = output_and_success
                 .map_or((None, true), |(output, success)| (Some(output), success));
@@ -186,6 +201,20 @@ async fn process_assignment(
             error: Some(error.to_string()),
         },
     };
+    // Publish changed capacity before completing the operation. A caller that
+    // immediately creates another sandbox after a successful delete should
+    // never see stale no-capacity, and a successful create must consume
+    // capacity before it is reported ready.
+    if capacity_changed {
+        let heartbeat = heartbeat(config, &state).await;
+        if let Err(error) = client.heartbeat(node_id, &heartbeat).await {
+            // Capacity publication narrows the delete-to-create scheduling
+            // race, but assignment completion is authoritative. A transient
+            // heartbeat failure must not strand completed work in Leased and
+            // cause the controller to retry an already-applied operation.
+            warn!(%error, "capacity heartbeat failed; reporting assignment completion anyway");
+        }
+    }
     client
         .complete_assignment(&request)
         .await

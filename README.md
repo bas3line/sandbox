@@ -41,10 +41,12 @@ The initial registry build publishes macOS ARM64 and Linux x86-64. The release w
 Then point the client at your self-hosted controller:
 
 ```sh
-export SANDBOX_URL=https://sandbox.example.com
+sandbox config set-server https://sandbox.example.com
 export SANDBOX_TOKEN='read-from-your-secret-store'
 sandbox doctor
 ```
+
+The CLI saves only the non-secret controller URL. `SANDBOX_URL` or `--server` can override it for one environment or command.
 
 See [server setup](docs/how-to-setup/server.md), [client setup](docs/how-to-setup/client.md), [custom public domains](docs/how-to-setup/custom-public-domains.md), [MCP setup](docs/mcp.md), and the registry-hosted [`sandbox-platform` skill](https://github.com/bas3line/rool-repo/tree/main/skills/sandbox-platform).
 
@@ -69,7 +71,7 @@ sandbox exec 019f... -- cargo test --workspace
 sandbox http 3000
 sandbox tunnel create 019f... --port 3000
 sandbox agent run codex --tenant platform
-sandbox delete 019f... --wait
+sandbox delete 019f...
 ```
 
 `sandbox http PORT` shares a service running on your current machine at a temporary `https://local-….tunnel.yshubham.com` URL through the hosted Sandbox relay. No third-party quick-tunnel domain or helper binary is involved. HTTP and WebSocket traffic—including Vite HMR—is carried over one outbound WebSocket and rewritten to the loopback origin, so development servers never need to allow a random public `Host`. Keep the command running and press Ctrl-C to revoke the exact-host route. Self-hosters can set `SANDBOX_HTTP_RELAY`; services inside a managed sandbox continue to use `sandbox tunnel create SANDBOX_ID --port PORT`.
@@ -199,6 +201,14 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --profile dist --workspace
+```
+
+After deploying to a test controller, exercise the complete CLI lifecycle and public tunnel path:
+
+```sh
+SANDBOX_URL=https://sandbox.example.com \
+SANDBOX_TOKEN='read-from-your-secret-store' \
+./scripts/smoke-test-cli.sh
 ```
 
 Rust is pinned to 1.97.1. Direct dependencies were resolved to current stable releases on 2026-07-19 and are locked in `Cargo.lock`.

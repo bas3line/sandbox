@@ -2,30 +2,42 @@ mod local_http;
 
 use std::{
     collections::BTreeMap,
+    io::Write as _,
+    path::{Path, PathBuf},
+    process::ExitCode,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sandbox_client::SandboxClient;
+use sandbox_client::{ClientError, SandboxClient};
 use sandbox_core::{
     OperationId, SandboxId, TunnelId,
     agent::{built_in_agent_profiles, find_agent_profile},
     api::{CreateTunnelRequest, ExecSandboxRequest},
     model::{
         CommandSpec, DataSensitivity, ExposureProtocol, IsolationPreference, NetworkMode,
-        Operation, OperationState, PortExposure, ResourceSpec, SandboxSpec, WorkloadSignals,
+        Operation, OperationState, PortExposure, ResourceSpec, Sandbox, SandboxSpec, SandboxState,
+        WorkloadSignals,
     },
 };
 use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 use url::Url;
+
+const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct ClientConfig {
+    server: Option<Url>,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "sandbox", version, about = "Create and control remote coding sandboxes", long_about = None)]
 struct Cli {
-    #[arg(long, env = "SANDBOX_URL", default_value = "http://127.0.0.1:8080")]
-    server: Url,
-    #[arg(long, env = "SANDBOX_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "SANDBOX_URL", global = true)]
+    server: Option<Url>,
+    #[arg(long, env = "SANDBOX_TOKEN", hide_env_values = true, global = true)]
     token: Option<String>,
     #[arg(long, global = true)]
     json: bool,
@@ -40,10 +52,7 @@ enum Commands {
     /// Create a sandbox.
     Create(CreateArgs),
     /// List sandboxes.
-    List {
-        #[arg(long, env = "SANDBOX_TENANT")]
-        tenant: Option<String>,
-    },
+    List(ListArgs),
     /// Show one sandbox.
     Inspect { id: SandboxId },
     /// Execute an argv-safe command in a running sandbox.
@@ -51,7 +60,11 @@ enum Commands {
     /// Destroy a sandbox and its ephemeral storage.
     Delete {
         id: SandboxId,
+        /// Return immediately with the delete operation ID.
         #[arg(long)]
+        no_wait: bool,
+        /// Deprecated compatibility flag; deletion now waits by default.
+        #[arg(long, hide = true, conflicts_with = "no_wait")]
         wait: bool,
     },
     /// Wait for an asynchronous operation.
@@ -74,6 +87,19 @@ enum Commands {
     Http(HttpArgs),
     /// Print MCP client configuration for sandbox-mcp.
     McpConfig,
+    /// Store or inspect non-secret CLI connection settings.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommands {
+    /// Save the controller URL for future commands.
+    SetServer { url: Url },
+    /// Show the effective controller and configuration path.
+    Show,
 }
 
 #[derive(Debug, Args)]
@@ -109,8 +135,23 @@ struct CreateArgs {
     /// Publish PORT, optionally with a custom PORT=SUBDOMAIN mapping.
     #[arg(long = "expose", value_parser = parse_exposure)]
     exposures: Vec<PortExposure>,
+    /// Return immediately with the create operation ID.
+    #[arg(long)]
+    no_wait: bool,
+    /// Maximum time to wait for creation.
+    #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+    wait_timeout: u64,
     #[arg(last = true)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct ListArgs {
+    #[arg(long, env = "SANDBOX_TENANT")]
+    tenant: Option<String>,
+    /// Include stopped and failed audit records.
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Debug, Args)]
@@ -158,6 +199,18 @@ enum AgentCommands {
         image: Option<String>,
         #[arg(long, default_value_t = 3_600)]
         ttl: u64,
+        /// Agent network mode. Use open only when the agent must reach an external model API.
+        #[arg(long, value_enum, default_value = "restricted")]
+        network: NetworkArg,
+        /// Return immediately after scheduling the agent sandbox.
+        #[arg(long)]
+        no_wait: bool,
+        /// Maximum time to wait for sandbox creation.
+        #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+        wait_timeout: u64,
+        /// Maximum time for the optional agent command.
+        #[arg(long, default_value_t = 900, value_name = "SECONDS")]
+        command_timeout: u64,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -207,24 +260,122 @@ enum SensitivityArg {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     // Reqwest and the WebSocket relay share rustls. Select one process-wide
     // provider explicitly so release builds never depend on feature inference.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let cli = Cli::parse();
-    let client = SandboxClient::new(
-        cli.server.clone(),
-        cli.token.clone().map(SecretString::from),
-    )?;
+    match run(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            if let Some(client_error) = error.downcast_ref::<ClientError>() {
+                if client_error.is_connect() {
+                    eprintln!(
+                        "hint: run `sandbox config set-server <URL>` (or set SANDBOX_URL), then run `sandbox doctor`"
+                    );
+                } else if matches!(
+                    client_error,
+                    ClientError::Api { status, .. }
+                        if *status == reqwest::StatusCode::UNAUTHORIZED
+                            || *status == reqwest::StatusCode::FORBIDDEN
+                ) {
+                    eprintln!("hint: provide SANDBOX_TOKEN from your deployment's secret store");
+                }
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
+    // Local sharing and the static agent catalog must remain usable even when
+    // no controller URL is configured or the saved controller config is bad.
+    if let Commands::Http(args) = &cli.command {
+        local_http::run(
+            args.port,
+            args.relay.clone(),
+            args.subdomain.clone(),
+            cli.token.as_deref(),
+            cli.json,
+        )
+        .await?;
+        return Ok(());
+    }
+    if matches!(
+        &cli.command,
+        Commands::Agent {
+            command: AgentCommands::List
+        }
+    ) {
+        render_agent_profiles(cli.json)?;
+        return Ok(());
+    }
+
+    if let Commands::Config { command } = &cli.command {
+        let config_path = client_config_path()?;
+        match command {
+            ConfigCommands::SetServer { url } => {
+                validate_server_url(url)?;
+                save_client_config(
+                    &config_path,
+                    &ClientConfig {
+                        server: Some(url.clone()),
+                    },
+                )?;
+                if cli.json {
+                    print_json(&serde_json::json!({
+                        "config_path": config_path,
+                        "server": url,
+                    }))?;
+                } else {
+                    println!("server  {url}");
+                    println!("saved   {}", config_path.display());
+                    println!("next    sandbox doctor");
+                }
+            }
+            ConfigCommands::Show => {
+                let server = resolve_server(cli.server.clone(), &config_path)?;
+                if cli.json {
+                    print_json(&serde_json::json!({
+                        "config_path": config_path,
+                        "server": server,
+                        "token_configured": cli.token.is_some(),
+                    }))?;
+                } else {
+                    println!("server  {server}");
+                    println!("config  {}", config_path.display());
+                    println!(
+                        "token   {}",
+                        if cli.token.is_some() {
+                            "configured"
+                        } else {
+                            "not configured"
+                        }
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let server = match cli.server.clone() {
+        Some(server) => {
+            validate_server_url(&server)?;
+            server
+        }
+        None => resolve_server(None, &client_config_path()?)?,
+    };
+    let client = SandboxClient::new(server.clone(), cli.token.clone().map(SecretString::from))?;
     match cli.command {
         Commands::Doctor => {
-            let health = client.health().await.context("contact sandbox server")?;
+            let health = client.health().await?;
             if cli.json {
                 print_json(&health)?;
             } else {
                 println!(
                     "ok  sandboxd {}  store={}  {}",
-                    health.version, health.store, cli.server
+                    health.version, health.store, server
                 );
                 if health.tunnels.enabled {
                     println!(
@@ -242,28 +393,52 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Create(args) => {
+            let no_wait = args.no_wait;
+            let wait_timeout = args.wait_timeout;
             let spec = create_spec(args);
             let response = client.create_sandbox(spec).await?;
-            if cli.json {
-                print_json(&response)?;
+            if no_wait {
+                if cli.json {
+                    print_json(&response)?;
+                } else {
+                    println!(
+                        "{}  scheduled  operation={}",
+                        response.sandbox.id, response.operation.id
+                    );
+                }
             } else {
-                println!(
-                    "{}  {:?}  node={}  isolation={:?}  operation={}",
-                    response.sandbox.id,
-                    response.sandbox.state,
-                    response.sandbox.node_id,
-                    response.sandbox.isolation,
-                    response.operation.id
-                );
-                for tunnel in &response.sandbox.tunnels {
-                    println!("tunnel  {}  {:?}", tunnel.public_url, tunnel.state);
+                let operation = wait_for(&client, response.operation.id, wait_timeout).await?;
+                if operation.state == OperationState::Failed {
+                    render_operation(&operation, cli.json)?;
+                }
+                ensure_lifecycle_operation_succeeded(&operation)?;
+                let sandbox = client.get_sandbox(response.sandbox.id).await?;
+                if cli.json {
+                    print_json(&serde_json::json!({
+                        "sandbox": sandbox,
+                        "operation": operation,
+                    }))?;
+                } else {
+                    render_sandbox(&sandbox);
+                    println!("operation  {}  succeeded", operation.id);
                 }
             }
         }
-        Commands::List { tenant } => {
-            let sandboxes = client.list_sandboxes(tenant.as_deref()).await?;
+        Commands::List(args) => {
+            let mut sandboxes = client.list_sandboxes(args.tenant.as_deref()).await?;
+            if !args.all {
+                sandboxes.retain(|sandbox| {
+                    !matches!(sandbox.state, SandboxState::Stopped | SandboxState::Failed)
+                });
+            }
             if cli.json {
                 print_json(&sandboxes)?;
+            } else if sandboxes.is_empty() {
+                if args.all {
+                    println!("No sandboxes.");
+                } else {
+                    println!("No active sandboxes. Use `sandbox list --all` for audit records.");
+                }
             } else {
                 println!("ID                                    STATE       ISOLATION  IMAGE");
                 for sandbox in sandboxes {
@@ -279,7 +454,11 @@ async fn main() -> Result<()> {
         }
         Commands::Inspect { id } => {
             let sandbox = client.get_sandbox(id).await?;
-            print_json(&sandbox)?;
+            if cli.json {
+                print_json(&sandbox)?;
+            } else {
+                render_sandbox(&sandbox);
+            }
         }
         Commands::Exec(args) => {
             let operation = client
@@ -312,39 +491,126 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Delete { id, wait } => {
+        Commands::Delete {
+            id,
+            no_wait,
+            wait: _,
+        } => {
             let operation = client.delete(id).await?;
-            if wait {
+            if no_wait {
+                if cli.json {
+                    print_json(&operation)?;
+                } else {
+                    println!("{}", operation.id);
+                }
+            } else {
                 let completed = wait_for(&client, operation.id, 120).await?;
                 render_operation(&completed, cli.json)?;
-            } else if cli.json {
-                print_json(&operation)?;
-            } else {
-                println!("{}", operation.id);
+                ensure_lifecycle_operation_succeeded(&completed)?;
             }
         }
         Commands::Wait { id, timeout } => {
             let operation = wait_for(&client, id, timeout).await?;
             render_operation(&operation, cli.json)?;
+            if let Some(output) = operation.output
+                && output.exit_code != 0
+            {
+                std::process::exit(output.exit_code.clamp(1, 255));
+            }
         }
         Commands::Agent { command } => run_agent(command, &client, cli.json).await?,
         Commands::Tunnel { command } => run_tunnel(command, &client, cli.json).await?,
-        Commands::Http(args) => {
-            local_http::run(
-                args.port,
-                args.relay,
-                args.subdomain,
-                cli.token.as_deref(),
-                cli.json,
-            )
-            .await?
-        }
+        Commands::Http(_) => unreachable!("HTTP commands return before client creation"),
         Commands::McpConfig => {
             print_json(
-                &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":cli.server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
+                &serde_json::json!({"mcpServers":{"sandbox":{"command":"sandbox-mcp","env":{"SANDBOX_URL":server,"SANDBOX_TOKEN":"use-your-client-secret-store"}}}}),
             )?;
         }
+        Commands::Config { .. } => unreachable!("config commands return before client creation"),
     }
+    Ok(())
+}
+
+fn client_config_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("SANDBOX_CONFIG").filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            bail!("SANDBOX_CONFIG must be an absolute path");
+        }
+        return Ok(path);
+    }
+    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path).join("sandbox/config.json"));
+    }
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("HOME is unset; set SANDBOX_CONFIG to an absolute path"))?;
+    Ok(PathBuf::from(home).join(".config/sandbox/config.json"))
+}
+
+fn load_client_config(path: &Path) -> Result<ClientConfig> {
+    if !path.exists() {
+        return Ok(ClientConfig::default());
+    }
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("read Sandbox config at {}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse Sandbox config at {}", path.display()))
+}
+
+fn resolve_server(explicit: Option<Url>, config_path: &Path) -> Result<Url> {
+    let server = match explicit {
+        Some(server) => server,
+        None => load_client_config(config_path)?
+            .server
+            .unwrap_or(Url::parse(DEFAULT_SERVER)?),
+    };
+    validate_server_url(&server)?;
+    Ok(server)
+}
+
+fn validate_server_url(server: &Url) -> Result<()> {
+    if !matches!(server.scheme(), "http" | "https") {
+        bail!("Sandbox server URL must use HTTP or HTTPS");
+    }
+    if server.host_str().is_none() {
+        bail!("Sandbox server URL must include a host");
+    }
+    if !server.username().is_empty() || server.password().is_some() {
+        bail!("Sandbox server URL must not contain credentials");
+    }
+    if server.query().is_some() || server.fragment().is_some() {
+        bail!("Sandbox server URL must not contain a query or fragment");
+    }
+    Ok(())
+}
+
+fn save_client_config(path: &Path, config: &ClientConfig) -> Result<()> {
+    if let Some(server) = &config.server {
+        validate_server_url(server)?;
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Sandbox config path has no parent directory"))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("create Sandbox config directory at {}", parent.display()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("create temporary config in {}", parent.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        temporary
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    let mut bytes = serde_json::to_vec_pretty(config)?;
+    bytes.push(b'\n');
+    temporary.write_all(&bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("save Sandbox config at {}", path.display()))?;
     Ok(())
 }
 
@@ -360,11 +626,7 @@ fn create_spec(args: CreateArgs) -> SandboxSpec {
             disk_mib: args.disk_mib,
             pids: args.pids,
         },
-        network: match args.network {
-            NetworkArg::Deny => NetworkMode::Deny,
-            NetworkArg::Restricted => NetworkMode::RestrictedEgress,
-            NetworkArg::Open => NetworkMode::OpenEgress,
-        },
+        network: network_mode(args.network),
         isolation: match args.isolation {
             IsolationArg::Auto => IsolationPreference::Auto,
             IsolationArg::Container => IsolationPreference::Container,
@@ -388,6 +650,14 @@ fn create_spec(args: CreateArgs) -> SandboxSpec {
         placement: Default::default(),
         exposures: args.exposures,
         agent: None,
+    }
+}
+
+const fn network_mode(network: NetworkArg) -> NetworkMode {
+    match network {
+        NetworkArg::Deny => NetworkMode::Deny,
+        NetworkArg::Restricted => NetworkMode::RestrictedEgress,
+        NetworkArg::Open => NetworkMode::OpenEgress,
     }
 }
 
@@ -425,6 +695,7 @@ async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool)
             if operation.state == OperationState::Failed {
                 render_operation(&operation, json)?;
             }
+            ensure_lifecycle_operation_succeeded(&operation)?;
             let sandbox = client.get_sandbox(id).await?;
             let tunnel = sandbox
                 .tunnels
@@ -471,6 +742,7 @@ async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool)
             } else {
                 let operation = wait_for(client, response.operation.id, 120).await?;
                 render_operation(&operation, json)?;
+                ensure_lifecycle_operation_succeeded(&operation)?;
             }
         }
     }
@@ -479,39 +751,130 @@ async fn run_tunnel(command: TunnelCommands, client: &SandboxClient, json: bool)
 
 async fn run_agent(command: AgentCommands, client: &SandboxClient, json: bool) -> Result<()> {
     match command {
-        AgentCommands::List => {
-            let profiles = built_in_agent_profiles();
-            if json {
-                print_json(&profiles)?;
-            } else {
-                for profile in profiles {
-                    println!("{:<14} {}", profile.name, profile.display_name);
-                }
-            }
-        }
+        AgentCommands::List => unreachable!("agent list returns before client creation"),
         AgentCommands::Run {
             name,
             tenant,
             image,
             ttl,
+            network,
+            no_wait,
+            wait_timeout,
+            command_timeout,
             args,
         } => {
             let profile = find_agent_profile(&name).ok_or_else(|| {
                 anyhow::anyhow!("unknown agent profile {name}; use `sandbox agent list`")
             })?;
-            let mut spec = profile.sandbox_spec(tenant, args, ttl);
-            if let Some(image) = image {
-                spec.image = image;
-            }
-            let response = client.create_sandbox(spec).await?;
-            if json {
-                print_json(&response)?;
-            } else {
-                println!(
-                    "{}  agent={}  operation={}",
-                    response.sandbox.id, name, response.operation.id
+            let execute_agent = !args.is_empty();
+            if no_wait && execute_agent {
+                bail!(
+                    "--no-wait cannot be combined with agent arguments; provision first, then use `sandbox exec`"
                 );
             }
+            let image = image.or_else(|| profile.default_image.clone()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "agent {name} has no bundled image; pass an approved immutable image with `--image`"
+                )
+            })?;
+            let agent_argv = profile.command_argv(args);
+            let mut spec = profile.sandbox_spec(tenant, image, ttl);
+            spec.network = network_mode(network);
+            let response = client.create_sandbox(spec).await?;
+            if no_wait {
+                if json {
+                    print_json(&response)?;
+                } else {
+                    println!(
+                        "{}  agent={}  scheduled  operation={}",
+                        response.sandbox.id, name, response.operation.id
+                    );
+                }
+                return Ok(());
+            }
+
+            let create_operation = wait_for(client, response.operation.id, wait_timeout).await?;
+            if create_operation.state == OperationState::Failed {
+                render_operation(&create_operation, json)?;
+            }
+            ensure_lifecycle_operation_succeeded(&create_operation)?;
+            let sandbox = client.get_sandbox(response.sandbox.id).await?;
+
+            // No extra arguments means "provision an agent-ready sandbox". An
+            // interactive process would require PTY streaming, so do not start
+            // one detached with its output discarded.
+            if !execute_agent {
+                if json {
+                    print_json(&serde_json::json!({
+                        "sandbox": sandbox,
+                        "operation": create_operation,
+                        "agent_command": null,
+                    }))?;
+                } else {
+                    render_sandbox(&sandbox);
+                    println!("agent      {}  provisioned", name);
+                    println!(
+                        "next       sandbox exec {} -- {} <non-interactive args>",
+                        sandbox.id, profile.executable
+                    );
+                    println!("note       interactive PTY attachment is not available yet");
+                }
+                return Ok(());
+            }
+
+            let operation = client
+                .exec(
+                    sandbox.id,
+                    ExecSandboxRequest {
+                        command: CommandSpec {
+                            argv: agent_argv,
+                            cwd: Some("/workspace".into()),
+                            env: BTreeMap::new(),
+                            timeout_seconds: command_timeout,
+                        },
+                    },
+                )
+                .await?;
+            let agent_operation =
+                wait_for(client, operation.id, command_timeout.saturating_add(30)).await?;
+            let exit_code = agent_operation
+                .output
+                .as_ref()
+                .map_or(0, |output| output.exit_code);
+            if json {
+                print_json(&serde_json::json!({
+                    "sandbox": sandbox,
+                    "create_operation": create_operation,
+                    "agent_operation": agent_operation,
+                }))?;
+            } else {
+                render_operation(&agent_operation, false)?;
+                println!("sandbox    {}  retained until deletion or TTL", sandbox.id);
+            }
+            if exit_code != 0 {
+                std::process::exit(exit_code.clamp(1, 255));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_agent_profiles(json: bool) -> Result<()> {
+    let profiles = built_in_agent_profiles();
+    if json {
+        print_json(&profiles)?;
+    } else {
+        println!("NAME           DISPLAY NAME         DEFAULT IMAGE");
+        for profile in profiles {
+            println!(
+                "{:<14} {:<20} {}",
+                profile.name,
+                profile.display_name,
+                profile
+                    .default_image
+                    .as_deref()
+                    .unwrap_or("<required: pass --image>")
+            );
         }
     }
     Ok(())
@@ -549,11 +912,61 @@ fn render_operation(operation: &Operation, json: bool) -> Result<()> {
         if let Some(error) = &operation.error {
             eprintln!("sandbox: {error}");
         }
+        let exit = operation
+            .output
+            .as_ref()
+            .map(|output| format!("  exit={}", output.exit_code))
+            .unwrap_or_default();
+        eprintln!(
+            "operation  {}  {}{}",
+            operation.id,
+            format!("{:?}", operation.state).to_lowercase(),
+            exit
+        );
     }
+    // Command operations use Failed for a non-zero process status but still
+    // include structured output. Let exec/wait propagate that exact exit code;
+    // lifecycle failures have no command output and remain regular CLI errors.
+    if operation.state == OperationState::Failed && operation.output.is_none() {
+        bail!("operation {} failed", operation.id);
+    }
+    Ok(())
+}
+
+fn ensure_lifecycle_operation_succeeded(operation: &Operation) -> Result<()> {
     if operation.state == OperationState::Failed {
         bail!("operation {} failed", operation.id);
     }
     Ok(())
+}
+
+fn render_sandbox(sandbox: &Sandbox) {
+    println!("sandbox    {}", sandbox.id);
+    println!(
+        "state      {}",
+        format!("{:?}", sandbox.state).to_lowercase()
+    );
+    println!("image      {}", sandbox.spec.image);
+    println!("node       {}", sandbox.node_id);
+    println!(
+        "isolation  {}  risk={}",
+        format!("{:?}", sandbox.isolation).to_lowercase(),
+        sandbox.risk_score
+    );
+    println!("expires    {}", sandbox.expires_at);
+    if let Some(agent) = &sandbox.spec.agent {
+        println!("agent      {agent}");
+    }
+    if let Some(failure) = &sandbox.failure {
+        println!("failure    {failure}");
+    }
+    for tunnel in &sandbox.tunnels {
+        println!(
+            "tunnel     {}  {}",
+            format!("{:?}", tunnel.state).to_lowercase(),
+            tunnel.public_url
+        );
+    }
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -604,6 +1017,134 @@ fn parse_port(value: &str) -> Result<u16, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_connection_flags_work_before_or_after_subcommands() {
+        for args in [
+            [
+                "sandbox",
+                "--server",
+                "https://sandbox.example.com",
+                "doctor",
+            ],
+            [
+                "sandbox",
+                "doctor",
+                "--server",
+                "https://sandbox.example.com",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).expect("parse global server flag");
+            assert_eq!(
+                cli.server.as_ref().and_then(Url::host_str),
+                Some("sandbox.example.com")
+            );
+        }
+    }
+
+    #[test]
+    fn config_round_trip_keeps_only_the_server() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("nested/config.json");
+        let expected = Url::parse("https://sandbox.example.com/control/").expect("valid URL");
+        save_client_config(
+            &path,
+            &ClientConfig {
+                server: Some(expected.clone()),
+            },
+        )
+        .expect("save config");
+
+        let loaded = load_client_config(&path).expect("load config");
+        assert_eq!(loaded.server, Some(expected));
+        let raw = std::fs::read_to_string(path).expect("read config");
+        assert!(!raw.to_ascii_lowercase().contains("token"));
+    }
+
+    #[test]
+    fn explicit_server_ignores_a_broken_saved_config() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, b"not json").expect("write broken config");
+        let explicit = Url::parse("https://sandbox.example.com").expect("valid URL");
+
+        assert_eq!(
+            resolve_server(Some(explicit.clone()), &path).expect("resolve explicit server"),
+            explicit
+        );
+    }
+
+    #[test]
+    fn server_urls_reject_credentials_and_non_http_schemes() {
+        for value in [
+            "file:///tmp/controller.sock",
+            "https://user:password@sandbox.example.com",
+            "https://sandbox.example.com?token=secret",
+        ] {
+            let url = Url::parse(value).expect("syntactically valid URL");
+            assert!(validate_server_url(&url).is_err(), "accepted {value}");
+        }
+    }
+
+    #[test]
+    fn create_and_delete_wait_by_default() {
+        let cli = Cli::try_parse_from(["sandbox", "create", "--image", "ubuntu:24.04"])
+            .expect("parse create");
+        let Commands::Create(create) = cli.command else {
+            panic!("expected create command");
+        };
+        assert!(!create.no_wait);
+
+        let id = SandboxId::new();
+        let cli =
+            Cli::try_parse_from(["sandbox", "delete", &id.to_string()]).expect("parse delete");
+        let Commands::Delete { no_wait, .. } = cli.command else {
+            panic!("expected delete command");
+        };
+        assert!(!no_wait);
+    }
+
+    #[test]
+    fn lifecycle_failure_is_an_error_even_when_output_is_attached() {
+        let operation = Operation {
+            id: OperationId::new(),
+            sandbox_id: SandboxId::new(),
+            state: OperationState::Failed,
+            output: Some(sandbox_core::model::CommandOutput {
+                exit_code: 1,
+                stdout: String::new(),
+                stderr: "creation failed".into(),
+                truncated: false,
+            }),
+            error: Some("runtime rejected the sandbox".into()),
+            created_at: "2026-07-20T00:00:00Z".parse().expect("valid timestamp"),
+            updated_at: "2026-07-20T00:00:01Z".parse().expect("valid timestamp"),
+        };
+
+        assert!(ensure_lifecycle_operation_succeeded(&operation).is_err());
+    }
+
+    #[test]
+    fn agent_arguments_use_the_explicit_delimiter() {
+        let cli = Cli::try_parse_from([
+            "sandbox",
+            "agent",
+            "run",
+            "opencode",
+            "--tenant",
+            "test",
+            "--",
+            "--version",
+        ])
+        .expect("parse agent command");
+        let Commands::Agent {
+            command: AgentCommands::Run { args, .. },
+        } = cli.command
+        else {
+            panic!("expected agent run command");
+        };
+        assert_eq!(args, ["--version"]);
+    }
 
     #[test]
     fn parses_http_shortcut() {
