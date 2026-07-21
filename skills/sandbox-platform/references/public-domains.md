@@ -27,4 +27,4 @@ For a proxied origin:
 
 For a hidden origin, route both the controller hostname and wildcard hostname through the outbound `compose.cloudflare.yaml` connector. The connector token and Origin CA private key are deployment credentials; never request them through MCP or place them inside a sandbox.
 
-See `docs/how-to-setup/custom-public-domains.md` or `https://tools.yshubham.com/docs/sandbox/how-to-setup/custom-public-domains.md` for the complete commands and verification steps.
+See `docs/how-to-setup/custom-public-domains.md` or the canonical [custom-domain guide](https://docs.yshubham.com/v2/sandbox/custom-domains) for the complete commands and verification steps.

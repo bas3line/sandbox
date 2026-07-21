@@ -27,7 +27,7 @@ Read [references/mcp.md](references/mcp.md) for the complete 12-tool map, resour
 
 Read [references/public-domains.md](references/public-domains.md) when configuring wildcard DNS, Cloudflare Advanced certificates, Origin CA, Full (strict), direct Caddy/Traefik, or an origin-hidden Cloudflare Tunnel. Domain and TLS settings belong to the server deployment; MCP clients cannot choose or rewrite them.
 
-For broader product, architecture, deployment, API, security, or operations questions, start at `https://tools.yshubham.com/docs/sandbox/index.md`. Fetch only the narrow raw Markdown reference needed for the task; `https://tools.yshubham.com/docs/sandbox/llms.txt` lists every canonical document.
+For broader product, architecture, deployment, API, security, or operations questions, start at `https://docs.yshubham.com/v2/sandbox/overview`. Use the local references in this skill for task-specific detail, and use `https://docs.yshubham.com/v2/sandbox/mcp-and-skills` for MCP and agent setup.
 
 ## Classify before creating
 

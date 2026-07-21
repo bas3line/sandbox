@@ -13,13 +13,21 @@
 
 **A self-hosted Rust control plane for disposable coding environments and AI agents.**
 
-[Architecture](docs/architecture.md) · [Security](docs/security.md) · [Setup guides](https://github.com/bas3line/sandbox/tree/main/docs/how-to-setup) · [Server setup](docs/how-to-setup/server.md) · [Client setup](docs/how-to-setup/client.md) · [Custom domains](docs/how-to-setup/custom-public-domains.md) · [CLI](docs/cli.md) · [MCP](docs/mcp.md)
+[Docs](https://docs.yshubham.com/v2/sandbox/overview) · [Architecture](https://docs.yshubham.com/v2/sandbox/architecture) · [Security](https://docs.yshubham.com/v2/sandbox/security) · [Server setup](https://docs.yshubham.com/v2/sandbox/server-setup) · [Client setup](https://docs.yshubham.com/v2/sandbox/client-setup) · [Custom domains](https://docs.yshubham.com/v2/sandbox/custom-domains) · [CLI](https://docs.yshubham.com/v2/sandbox/cli) · [MCP](https://docs.yshubham.com/v2/sandbox/mcp-and-skills)
 
 </div>
 
 <p align="center">
   <img src="public/ChatGPT%20Image%20Jul%2019,%202026,%2010_31_43%20PM.png" alt="Bas3line Sandbox: a safe playground for coding agents" width="100%">
 </p>
+
+## Links
+
+**Start here:** [product docs](https://docs.yshubham.com/v2/sandbox/overview) · [MCP and agent setup](https://docs.yshubham.com/v2/sandbox/mcp-and-skills) · [tools registry](https://tools.yshubham.com/)
+
+**Source:** [GitHub](https://github.com/bas3line/sandbox) · [self-hosted forge mirror](https://git.yshubham.com/bas3line/sandbox) · [`sandbox-platform` agent skill](https://github.com/bas3line/rool-repo/tree/main/skills/sandbox-platform)
+
+**Platform:** [yshubham.com](https://yshubham.com/) · [status](https://status.yshubham.com/) · [trace](https://trace.yshubham.com/) · [temporary objects](https://objects.yshubham.com/)
 
 ## One-command workstation setup
 
@@ -48,9 +56,9 @@ sandbox doctor
 
 The CLI saves only the non-secret controller URL. `SANDBOX_URL` or `--server` can override it for one environment or command.
 
-See [server setup](docs/how-to-setup/server.md), [client setup](docs/how-to-setup/client.md), [custom public domains](docs/how-to-setup/custom-public-domains.md), [MCP setup](docs/mcp.md), and the registry-hosted [`sandbox-platform` skill](https://github.com/bas3line/rool-repo/tree/main/skills/sandbox-platform).
+See [server setup](https://docs.yshubham.com/v2/sandbox/server-setup), [client setup](https://docs.yshubham.com/v2/sandbox/client-setup), [custom public domains](https://docs.yshubham.com/v2/sandbox/custom-domains), [MCP setup](https://docs.yshubham.com/v2/sandbox/mcp-and-skills), and the registry-hosted [`sandbox-platform` skill](https://github.com/bas3line/rool-repo/tree/main/skills/sandbox-platform).
 
-Hosted documentation is available as a [human portal](https://tools.yshubham.com/docs/sandbox/), a raw [agent index](https://tools.yshubham.com/docs/sandbox/index.md), and an [`llms.txt`](https://tools.yshubham.com/docs/sandbox/llms.txt) discovery file.
+The canonical hosted reference is [Sandbox documentation](https://docs.yshubham.com/v2/sandbox/overview); [MCP and agent setup](https://docs.yshubham.com/v2/sandbox/mcp-and-skills) lives alongside it. The registry remains the source for install scripts and release assets.
 
 The MCP guide includes native setup for Codex, Claude Code, Gemini CLI, OpenCode, VS Code/Copilot, and Goose, plus drop-in templates for Cursor, Claude Desktop, Windsurf, Cline, Roo Code, Gemini Code Assist, and generic MCP clients. Agents without native MCP support use the same `sandbox` CLI and installed skill.
 
@@ -94,7 +102,7 @@ sandbox delete 019f...
 | Aider and Goose profiles | Implemented using their official images |
 | OIDC/SAML, tenant RBAC, secret broker, interactive PTY, raw TCP tunnels | Design boundary; not implemented in v0.1 |
 
-This repository is an engineering foundation, not a magic claim that Docker equals a hardened multi-tenant VM. Read the [security model](docs/security.md) before exposing it to hostile tenants.
+This repository is an engineering foundation, not a magic claim that Docker equals a hardened multi-tenant VM. Read the [security model](https://docs.yshubham.com/v2/sandbox/security) before exposing it to hostile tenants.
 
 ## AEGIS: the custom isolation algorithm
 
@@ -103,7 +111,7 @@ AEGIS—**Adaptive Execution Guard and Isolation Scheduler**—does two jobs in 
 1. Scores workload risk from data sensitivity, network access, repository trust, generated-code execution, secret use, host mounts, exposure, privilege, and lifetime.
 2. Chooses the minimum isolation tier, hard-filters unsafe nodes, then ranks survivors using dominant-resource headroom, fragmentation, host pressure, image warmth, region locality, and bin-packing efficiency.
 
-A high-risk request cannot downgrade itself to a container. If no compatible microVM worker exists, the request fails with `no_capacity`; it never silently weakens isolation. See [docs/aegis.md](docs/aegis.md).
+A high-risk request cannot downgrade itself to a container. If no compatible microVM worker exists, the request fails with `no_capacity`; it never silently weakens isolation. See [the AEGIS scheduler reference](https://docs.yshubham.com/v2/sandbox/aegis).
 
 ## The shape
 
@@ -146,7 +154,7 @@ cargo run --package sandbox-cli -- create --tenant dev --image ubuntu:24.04 --tt
 
 The Compose stack intentionally sets the microVM threshold above the score range so it can run on a normal Docker laptop. That is a developer convenience, not the production policy. Production keeps the default threshold of `55` and supplies compatible workers.
 
-To publish sandbox services, configure wildcard DNS and enable an edge profile. Direct Traefik, Caddy, proxied Cloudflare with Origin CA and Full (strict), an outbound-only Cloudflare Tunnel overlay, and a clearly marked HTTP compatibility mode are documented in [docs/tunnels.md](docs/tunnels.md). Follow the [custom-domain setup](docs/how-to-setup/custom-public-domains.md) for the complete path. The outbound Cloudflare option keeps the origin off public ingress; real deployment domains, connector tokens, addresses, and certificate material belong in the environment or secret store, never the repository.
+To publish sandbox services, configure wildcard DNS and enable an edge profile. Direct Traefik, Caddy, proxied Cloudflare with Origin CA and Full (strict), an outbound-only Cloudflare Tunnel overlay, and a clearly marked HTTP compatibility mode are documented in [the tunnel guide](https://docs.yshubham.com/v2/platform/tunnels). Follow the [custom-domain setup](https://docs.yshubham.com/v2/sandbox/custom-domains) for the complete path. The outbound Cloudflare option keeps the origin off public ingress; real deployment domains, connector tokens, addresses, and certificate material belong in the environment or secret store, never the repository.
 
 ## Coding agents
 
@@ -160,7 +168,7 @@ Pinned image builders are included for:
 sandbox agent list
 ```
 
-Agent credentials do not belong in command arguments, labels, or plaintext API fields. Connect the external runtime driver to Vault, AWS Secrets Manager, GCP Secret Manager, or your existing workload-identity broker. See [docs/agents.md](docs/agents.md).
+Agent credentials do not belong in command arguments, labels, or plaintext API fields. Connect the external runtime driver to Vault, AWS Secrets Manager, GCP Secret Manager, or your existing workload-identity broker. See [the coding-agent guide](https://docs.yshubham.com/v2/sandbox/coding-agents).
 
 ## Repository map
 
