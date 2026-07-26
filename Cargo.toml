@@ -26,7 +26,7 @@ anyhow = "1.0.103"
 async-nats = "0.49.1"
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["http2", "json", "macros", "ws"] }
-base64 = "0.22.1"
+base64 = "0.23.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.2", features = ["derive", "env", "string"] }
 config = { version = "0.15.25", default-features = false, features = ["toml"] }
