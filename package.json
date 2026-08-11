@@ -1,0 +1,6 @@
+{
+  "name": "sandbox-editor",
+  "version": "2.4.1",
+  "type": "module",
+  "main": "src/editor.ts"
+}
