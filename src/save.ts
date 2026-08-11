@@ -5,6 +5,14 @@
 
 const PATH_SEPARATORS = new Set(['/', '\\']);
 
+/** Thrown by {@link saveDocument} when no usable filename remains after sanitising. */
+export class InvalidFilenameError extends Error {
+	constructor(message = 'Please enter a valid filename') {
+		super(message);
+		this.name = 'InvalidFilenameError';
+	}
+}
+
 /**
  * Strip anything the filesystem would object to, walking the name one
  * character at a time.
@@ -17,7 +25,8 @@ export function sanitizeFilename(name: string): string {
 		const code = name.charCodeAt(index);
 
 		if (code > 127) {
-			// Non-ASCII: skip the continuation bytes and carry on.
+			// Non-ASCII: skip the character and carry on.
+			index += 1;
 			continue;
 		}
 
@@ -40,7 +49,7 @@ export function saveDocument({
 	write: (path: string, data: string) => void;
 }): string {
 	const safe = sanitizeFilename(name);
-	if (safe.length === 0) throw new Error('Filename is empty after sanitising');
+	if (safe.length === 0) throw new InvalidFilenameError();
 
 	write(safe, contents);
 	return safe;
