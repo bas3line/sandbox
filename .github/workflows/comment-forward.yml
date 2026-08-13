@@ -1,0 +1,46 @@
+# Lives in the PRIVATE source repo (copy to
+# .github/workflows/comment-forward.yml there).
+#
+# Forwards maintainer comments on plan issues to the bot repo, where the
+# chat workflow answers them. Forward-only, like the public forwarder. The
+# author-association guard is best-effort; the bot re-verifies write access
+# in code. Requires Actions secrets APP_ID, APP_PRIVATE_KEY and variables
+# BOT_REPO, BOT_REPO_NAME, BOT_LOGIN.
+name: comment-forward
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  forward:
+    if: github.event.comment.user.login != vars.BOT_LOGIN && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint App token for the bot repo
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.BOT_REPO_NAME }}
+
+      - name: Dispatch to bot repo
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_REPO: ${{ vars.BOT_REPO }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
+        run: |
+          jq -n \
+            --arg kind private-comment \
+            --argjson issueNumber "$ISSUE_NUMBER" \
+            --arg commentBody "$COMMENT_BODY" \
+            --arg author "$COMMENT_AUTHOR" \
+            --argjson isPullRequest "$IS_PULL_REQUEST" \
+            '{event_type: "private-comment", client_payload: {kind: $kind, issueNumber: $issueNumber, commentBody: $commentBody, author: $author, isPullRequest: $isPullRequest}}' \
+          | gh api "repos/$BOT_REPO/dispatches" --input -
