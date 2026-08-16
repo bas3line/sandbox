@@ -4,7 +4,7 @@ WORKDIR /source
 COPY . .
 RUN cargo build --profile dist --locked --package sandbox-cli --package sandbox-mcp --package sandboxd
 
-FROM docker:29.6.2-cli AS docker-cli
+FROM docker:29.7.2-cli AS docker-cli
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
